@@ -227,6 +227,7 @@ export const createStaffAccount = onCall(
           tx, db, organizationId, staffUid: uid, branchIds: branchAccess, input: courierPay,
           effectiveFromDate: istanbulDate(now.getTime()), actorUid: request.auth!.uid,
           actorRoles: callerRoles(request, organizationId), now: Timestamp.fromDate(now), scope,
+          issuesInvoice: (data.courierPay as Record<string, unknown>).issuesInvoice === true,
         })
         : null;
       tx.set(ref, doc);

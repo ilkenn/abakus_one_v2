@@ -374,10 +374,17 @@ class _StaffPasswordDialogState extends State<_StaffPasswordDialog> {
 /// What the staff edit form returns: the roles, and a new courier rate
 /// when one was typed (courier role only, and only if it changed).
 class StaffEditResult {
-  const StaffEditResult({required this.roles, this.courierPay});
+  const StaffEditResult({
+    required this.roles,
+    this.courierPay,
+    this.issuesInvoice,
+  });
 
   final Set<StaffRole> roles;
   final CourierPayRateInput? courierPay;
+
+  /// Stage 6A — the new "Fatura Keser" value, only when it changed.
+  final bool? issuesInvoice;
 }
 
 /// Changes a staff member's roles and — for a courier — its pay (ADR-085
@@ -389,6 +396,7 @@ Future<StaffEditResult?> showStaffRolesDialog(
   required Set<StaffRole> current,
   required List<StaffRole> assignableRoles,
   CourierPayRate? currentCourierRate,
+  bool currentIssuesInvoice = false,
   bool allowPoolCourier = false,
 }) {
   return showDialog<StaffEditResult>(
@@ -398,6 +406,7 @@ Future<StaffEditResult?> showStaffRolesDialog(
       current: current,
       assignableRoles: assignableRoles,
       currentCourierRate: currentCourierRate,
+      currentIssuesInvoice: currentIssuesInvoice,
       allowPoolCourier: allowPoolCourier,
     ),
   );
@@ -409,6 +418,7 @@ class _StaffEditDialog extends StatefulWidget {
     required this.current,
     required this.assignableRoles,
     required this.currentCourierRate,
+    required this.currentIssuesInvoice,
     required this.allowPoolCourier,
   });
 
@@ -416,6 +426,7 @@ class _StaffEditDialog extends StatefulWidget {
   final Set<StaffRole> current;
   final List<StaffRole> assignableRoles;
   final CourierPayRate? currentCourierRate;
+  final bool currentIssuesInvoice;
   final bool allowPoolCourier;
 
   @override
@@ -431,6 +442,7 @@ class _StaffEditDialogState extends State<_StaffEditDialog> {
     initial: widget.currentCourierRate,
     allowPool: widget.allowPoolCourier,
     withEffectiveDate: true,
+    initialIssuesInvoice: widget.currentIssuesInvoice,
   );
 
   @override
@@ -441,12 +453,17 @@ class _StaffEditDialogState extends State<_StaffEditDialog> {
 
   void _save() {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    final input = _selected.contains(StaffRole.courier) ? _pay.toInput() : null;
+    final isCourier = _selected.contains(StaffRole.courier);
+    final input = isCourier ? _pay.toInput() : null;
     Navigator.of(context).pop(StaffEditResult(
       roles: Set.of(_selected),
       courierPay: input != null && input.differsFrom(widget.currentCourierRate)
           ? input
           : null,
+      issuesInvoice:
+          isCourier && _pay.issuesInvoice != widget.currentIssuesInvoice
+              ? _pay.issuesInvoice
+              : null,
     ));
   }
 

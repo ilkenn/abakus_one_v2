@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:abakus_one_v2/features/courier/data/courier_document_service.dart';
 import 'package:abakus_one_v2/features/courier/data/courier_pay_gateway.dart';
 import 'package:abakus_one_v2/features/courier/domain/pay/courier_pay_models.dart';
 
@@ -15,6 +18,20 @@ class FakeCourierPayGateway implements CourierPayGateway {
   String? lastReason;
   CourierPayRateInput? lastInput;
 
+  // Stage 6A.
+  bool issuesInvoice = false;
+  bool? lastInvoicing;
+  CourierInvoicePreview preview = const CourierInvoicePreview(
+      lineCount: 0,
+      earnedMinorUnits: 0,
+      carriedLineCount: 0,
+      overlapping: false);
+  List<CourierInvoice> invoices = const [];
+  bool canRecordPayments = false;
+  ({Uint8List bytes, String contentType})? file;
+  Map<String, Object?>? lastSubmit;
+  Map<String, Object?>? lastPayment;
+
   void _maybeFail() {
     final e = error;
     if (e != null) {
@@ -24,12 +41,109 @@ class FakeCourierPayGateway implements CourierPayGateway {
   }
 
   @override
-  Future<CourierPayRate?> currentRate({
+  Future<CourierPayProfileSummary> payProfile({
     required String organizationId,
     required String targetUid,
   }) async {
     calls.add('currentRate:$targetUid');
-    return rate;
+    return CourierPayProfileSummary(
+        currentRate: rate, issuesInvoice: issuesInvoice);
+  }
+
+  @override
+  Future<void> setInvoicing({
+    required String organizationId,
+    required String targetUid,
+    required bool issuesInvoice,
+  }) async {
+    calls.add('setInvoicing:$targetUid:$issuesInvoice');
+    _maybeFail();
+    lastInvoicing = issuesInvoice;
+  }
+
+  @override
+  Future<CourierInvoicePreview> previewInvoice({
+    required String periodFrom,
+    required String periodTo,
+  }) async {
+    calls.add('preview:$periodFrom..$periodTo');
+    return preview;
+  }
+
+  @override
+  Future<CourierInvoice> submitInvoice({
+    required String periodFrom,
+    required String periodTo,
+    required int invoiceAmountMinorUnits,
+    required String invoiceNumber,
+    required String note,
+    required Uint8List bytes,
+    required String contentType,
+  }) async {
+    calls.add('submitInvoice');
+    _maybeFail();
+    lastSubmit = {
+      'periodFrom': periodFrom,
+      'periodTo': periodTo,
+      'amount': invoiceAmountMinorUnits,
+      'number': invoiceNumber,
+      'note': note,
+      'contentType': contentType,
+      'size': bytes.length,
+    };
+    return sampleInvoice();
+  }
+
+  @override
+  Future<CourierInvoiceList> listInvoices({
+    required String organizationId,
+  }) async =>
+      CourierInvoiceList(
+          invoices: invoices, canRecordPayments: canRecordPayments);
+
+  @override
+  Future<void> reviewInvoice({
+    required String organizationId,
+    required String invoiceId,
+    required bool approve,
+    String? reason,
+  }) async {
+    calls.add('${approve ? 'approveInvoice' : 'rejectInvoice'}:$invoiceId');
+    _maybeFail();
+    lastReason = reason;
+  }
+
+  @override
+  Future<void> recordPayment({
+    required String organizationId,
+    required CourierPaymentKind kind,
+    String? invoiceId,
+    String? targetUid,
+    String? reversesPaymentId,
+    int? amountMinorUnits,
+    bool full = false,
+    String? paidDate,
+    String? note,
+  }) async {
+    calls.add('payment:${kind.name}');
+    _maybeFail();
+    lastPayment = {
+      'invoiceId': invoiceId,
+      'targetUid': targetUid,
+      'reversesPaymentId': reversesPaymentId,
+      'amount': amountMinorUnits,
+      'full': full,
+      'paidDate': paidDate,
+      'note': note,
+    };
+  }
+
+  @override
+  Future<({Uint8List bytes, String contentType})> invoiceFile({
+    required String invoiceId,
+  }) async {
+    calls.add('file:$invoiceId');
+    return file!;
   }
 
   @override
@@ -140,3 +254,55 @@ const shopRate = CourierPayRate(
   hourlyMinorUnits: 15000,
   effectiveFromDate: '2026-11-15',
 );
+
+CourierInvoice sampleInvoice({
+  String id = 'inv-1',
+  CourierInvoiceStatus status = CourierInvoiceStatus.submitted,
+  int earned = 12000,
+  int amount = 14160,
+  int paid = 0,
+  String contentType = 'application/pdf',
+}) =>
+    CourierInvoice(
+      invoiceId: id,
+      staffUid: 'courier-1',
+      courierName: 'Ali Kurye',
+      periodFrom: '2026-11-01',
+      periodTo: '2026-11-14',
+      lineCount: 3,
+      earnedMinorUnits: earned,
+      invoiceAmountMinorUnits: amount,
+      invoiceNumber: 'ABC2026000001',
+      note: null,
+      contentType: contentType,
+      status: status,
+      rejectReason:
+          status == CourierInvoiceStatus.rejected ? 'Fatura no hatalı' : null,
+      paidMinorUnits: paid,
+      remainingMinorUnits: amount - paid,
+    );
+
+/// Stage 6A — picks a fixed file and records opened PDFs.
+class FakeCourierDocumentService implements CourierDocumentService {
+  CourierPickedDocument? next = (
+    bytes: Uint8List.fromList(List.filled(1024, 1)),
+    contentType: 'application/pdf',
+    name: 'fatura.pdf',
+  );
+  final opened = <String>[];
+
+  @override
+  Future<CourierPickedDocument?> pickPdf() async => next;
+
+  @override
+  Future<CourierPickedDocument?> pickPhoto({required bool fromCamera}) async =>
+      next == null
+          ? null
+          : (bytes: next!.bytes, contentType: 'image/jpeg', name: 'foto.jpg');
+
+  @override
+  Future<bool> openPdf(Uint8List bytes, {required String name}) async {
+    opened.add(name);
+    return true;
+  }
+}

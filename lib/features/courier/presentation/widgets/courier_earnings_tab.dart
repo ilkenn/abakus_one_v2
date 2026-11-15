@@ -10,11 +10,14 @@ import '../../../../shared/widgets/feedback/loading_view.dart';
 import '../../data/courier_pay_gateway.dart';
 import '../../domain/pay/courier_pay_models.dart';
 import '../providers/courier_pay_providers.dart';
+import '../screens/courier_invoice_upload_screen.dart';
+import 'courier_pay_period_bar.dart';
 
 /// ADR-085 stage 5 — "Kazancım" in the courier app: the courier's own rate,
 /// its shift ("Vardiya Başlat" / "Vardiya Bitir", each approved by a
-/// manager; shop couriers only) and its earnings for today, this week or
-/// this month.
+/// manager; shop couriers only) and its earnings for today, this week,
+/// this month or any range (stage 6A), with what was paid and what is still
+/// owed. An invoicing courier sends its invoices from here ("Fatura Yükle").
 class CourierEarningsTab extends ConsumerStatefulWidget {
   const CourierEarningsTab({super.key});
 
@@ -23,16 +26,25 @@ class CourierEarningsTab extends ConsumerStatefulWidget {
 }
 
 class _CourierEarningsTabState extends ConsumerState<CourierEarningsTab> {
-  CourierPayPeriod _period = CourierPayPeriod.today;
+  CourierPayPeriod? _period = CourierPayPeriod.today;
+  late CourierPayRange _range =
+      CourierPayPeriod.today.range(ref.read(courierPayClockProvider)());
   bool _busy = false;
 
   Future<void> _refresh() async {
     ref.invalidate(myCourierPayProvider);
     try {
-      await ref.read(myCourierPayProvider(_period).future);
+      await ref.read(myCourierPayProvider(_range).future);
     } catch (_) {
       // The error state shows it.
     }
+  }
+
+  Future<void> _uploadInvoice() async {
+    final sent = await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (_) => CourierInvoiceUploadScreen(initialRange: _range),
+    ));
+    if (sent == true) ref.invalidate(myCourierPayProvider);
   }
 
   Future<void> _shiftAction(
@@ -62,7 +74,7 @@ class _CourierEarningsTabState extends ConsumerState<CourierEarningsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final payAsync = ref.watch(myCourierPayProvider(_period));
+    final payAsync = ref.watch(myCourierPayProvider(_range));
     return payAsync.when(
       loading: () =>
           const LoadingView(message: 'Kazanç bilgileri yükleniyor...'),
@@ -105,20 +117,35 @@ class _CourierEarningsTabState extends ConsumerState<CourierEarningsTab> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
-            Wrap(
-              spacing: AppSpacing.sm,
-              children: [
-                for (final period in CourierPayPeriod.values)
-                  ChoiceChip(
-                    key: Key('earningsPeriod-${period.name}'),
-                    label: Text(period.label),
-                    selected: _period == period,
-                    onSelected: (_) => setState(() => _period = period),
-                  ),
-              ],
+            CourierPayPeriodBar(
+              selected: _period,
+              range: _range,
+              now: ref.read(courierPayClockProvider)(),
+              onChanged: (period, range) => setState(() {
+                _period = period;
+                _range = range;
+              }),
             ),
             const SizedBox(height: AppSpacing.md),
-            CourierEarningsTotalsCard(totals: pay.totals),
+            CourierEarningsTotalsCard(
+              totals: pay.totals,
+              paidInPeriodMinorUnits: pay.paidInPeriodMinorUnits,
+              balanceMinorUnits: pay.balance.balanceMinorUnits,
+            ),
+            if (pay.issuesInvoice) ...[
+              const SizedBox(height: AppSpacing.md),
+              _InvoicesCard(
+                invoices: pay.invoices,
+                onUpload: _uploadInvoice,
+              ),
+            ],
+            if (pay.payments.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.md),
+              const Text('Bu Dönemdeki Ödemeler',
+                  style: AppTypography.titleMedium),
+              for (final payment in pay.payments)
+                CourierPaymentTile(payment: payment),
+            ],
             const SizedBox(height: AppSpacing.md),
             if (pay.lines.isEmpty)
               Padding(
@@ -214,9 +241,20 @@ class _ShiftCard extends StatelessWidget {
 
 /// Total, packages and shift time of a period (courier app and panel).
 class CourierEarningsTotalsCard extends StatelessWidget {
-  const CourierEarningsTotalsCard({super.key, required this.totals});
+  const CourierEarningsTotalsCard({
+    super.key,
+    required this.totals,
+    this.paidInPeriodMinorUnits,
+    this.balanceMinorUnits,
+  });
 
   final CourierEarningsTotals totals;
+
+  /// Stage 6A — paid in the period (by payment date).
+  final int? paidInPeriodMinorUnits;
+
+  /// Stage 6A — still owed, across all time ("Kalan Bakiye").
+  final int? balanceMinorUnits;
 
   @override
   Widget build(BuildContext context) {
@@ -243,6 +281,153 @@ class CourierEarningsTotalsCard extends StatelessWidget {
             '${formatPayAmount(totals.shiftMinorUnits)}',
             style: AppTypography.bodyMedium,
           ),
+          if (paidInPeriodMinorUnits != null)
+            Text(
+              'Bu dönemde ödenen: ${formatPayAmount(paidInPeriodMinorUnits!)}',
+              key: const Key('earningsPaidInPeriod'),
+              style: AppTypography.bodyMedium,
+            ),
+          if (balanceMinorUnits != null) ...[
+            const Divider(),
+            Text(
+              'Kalan Bakiye: ${formatPayAmount(balanceMinorUnits!)}',
+              key: const Key('earningsBalance'),
+              style: AppTypography.titleMedium,
+            ),
+            Text(
+              'Tüm hakedişlerinizden, yapılan tüm ödemeler düşüldükten sonra.',
+              style: AppTypography.bodySmall
+                  .copyWith(color: AppColors.textSecondary),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Stage 6A — the invoicing courier's invoices and "Fatura Yükle".
+class _InvoicesCard extends StatelessWidget {
+  const _InvoicesCard({required this.invoices, required this.onUpload});
+
+  final List<CourierInvoice> invoices;
+  final VoidCallback onUpload;
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      key: const Key('courierInvoicesCard'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('Faturalarım', style: AppTypography.titleMedium),
+          const SizedBox(height: AppSpacing.sm),
+          ElevatedButton.icon(
+            key: const Key('invoiceUpload'),
+            onPressed: onUpload,
+            icon: const Icon(Icons.upload_file_outlined),
+            label: const Text('Fatura Yükle'),
+          ),
+          if (invoices.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.sm),
+              child: Text('Henüz fatura göndermediniz.',
+                  style: AppTypography.bodySmall
+                      .copyWith(color: AppColors.textSecondary)),
+            )
+          else
+            for (final invoice in invoices)
+              CourierInvoiceTile(invoice: invoice),
+        ],
+      ),
+    );
+  }
+}
+
+/// One invoice: period, amount, status (and why it was rejected).
+class CourierInvoiceTile extends StatelessWidget {
+  const CourierInvoiceTile({super.key, required this.invoice, this.onTap});
+
+  final CourierInvoice invoice;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColor = switch (invoice.status) {
+      CourierInvoiceStatus.paid => AppColors.success,
+      CourierInvoiceStatus.rejected => AppColors.error,
+      CourierInvoiceStatus.submitted => AppColors.warning,
+      _ => AppColors.info,
+    };
+    return ListTile(
+      key: Key('invoice-${invoice.invoiceId}'),
+      contentPadding: EdgeInsets.zero,
+      onTap: onTap,
+      leading: Icon(
+        invoice.isPdf ? Icons.picture_as_pdf_outlined : Icons.image_outlined,
+        color: AppColors.primary,
+      ),
+      title: Text(
+        onTap == null
+            ? invoice.period
+            : '${invoice.courierName} · ${invoice.period}',
+        style: AppTypography.bodyLarge,
+      ),
+      subtitle: Text(
+        [
+          'Fatura ${formatPayAmount(invoice.invoiceAmountMinorUnits)}',
+          if (invoice.paidMinorUnits > 0)
+            'Ödenen ${formatPayAmount(invoice.paidMinorUnits)}',
+          if (invoice.status == CourierInvoiceStatus.rejected &&
+              invoice.rejectReason != null)
+            'Gerekçe: ${invoice.rejectReason}',
+        ].join(' · '),
+        style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
+      ),
+      trailing: Text(
+        invoice.status.label,
+        key: Key('invoiceStatus-${invoice.invoiceId}'),
+        style: AppTypography.labelMedium.copyWith(color: statusColor),
+      ),
+    );
+  }
+}
+
+/// One payment, advance or reversal.
+class CourierPaymentTile extends StatelessWidget {
+  const CourierPaymentTile({super.key, required this.payment, this.onReverse});
+
+  final CourierPayment payment;
+
+  /// Admin/owner only — undoes this payment with a reversal entry.
+  final VoidCallback? onReverse;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      key: Key('payment-${payment.paymentId}'),
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.payments_outlined, color: AppColors.primary),
+      title: Text(
+        '${payment.kind.label}${payment.reversed ? ' (geri alındı)' : ''}',
+        style: AppTypography.bodyLarge,
+      ),
+      subtitle: Text(
+        [payment.paidDate, if (payment.note != null) payment.note!].join(' · '),
+        style: AppTypography.bodySmall.copyWith(color: AppColors.textSecondary),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(formatPayAmount(payment.amountMinorUnits),
+              style: AppTypography.labelLarge),
+          if (onReverse != null && payment.reversible)
+            IconButton(
+              key: Key('reversePayment-${payment.paymentId}'),
+              tooltip: 'Geri Al',
+              icon: const Icon(Icons.undo_rounded),
+              onPressed: onReverse,
+            ),
         ],
       ),
     );

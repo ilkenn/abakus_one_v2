@@ -71,10 +71,12 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
       );
 
   void _showMessage(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(message),
-      backgroundColor: isError ? AppColors.error : null,
-    ));
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? AppColors.error : null,
+      ));
   }
 
   /// ADR-085 stage 1 — only an admin/owner changes whether staff are active.
@@ -158,11 +160,14 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
     final organizationId = ref.read(currentOrganizationIdProvider);
     final payGateway = ref.read(courierPayGatewayProvider);
     CourierPayRate? currentRate;
+    var currentIssuesInvoice = false;
     if (member.roles.contains(StaffRole.courier)) {
       setState(() => _busy = true);
       try {
-        currentRate = await payGateway.currentRate(
+        final profile = await payGateway.payProfile(
             organizationId: organizationId, targetUid: targetUid);
+        currentRate = profile.currentRate;
+        currentIssuesInvoice = profile.issuesInvoice;
       } on CourierPayException catch (error) {
         if (mounted) _showMessage(error.message, isError: true);
       } finally {
@@ -176,13 +181,15 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
       current: member.roles,
       assignableRoles: _assignableRoles,
       currentCourierRate: currentRate,
+      currentIssuesInvoice: currentIssuesInvoice,
       allowPoolCourier: _canChangeActive,
     );
     if (result == null || !mounted) return;
     final rolesChanged = result.roles.length != member.roles.length ||
         !result.roles.containsAll(member.roles);
     final pay = result.courierPay;
-    if (!rolesChanged && pay == null) return;
+    final invoicing = result.issuesInvoice;
+    if (!rolesChanged && pay == null && invoicing == null) return;
     await _run((gateway, organizationId) async {
       if (rolesChanged) {
         await gateway.updateStaffMember(
@@ -191,21 +198,30 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
           roles: result.roles,
         );
       }
-      if (pay != null) {
+      if (pay != null || invoicing != null) {
         try {
-          await payGateway.setRate(
-              organizationId: organizationId, targetUid: targetUid, input: pay);
+          if (pay != null) {
+            await payGateway.setRate(
+                organizationId: organizationId,
+                targetUid: targetUid,
+                input: pay);
+          }
+          if (invoicing != null) {
+            await payGateway.setInvoicing(
+                organizationId: organizationId,
+                targetUid: targetUid,
+                issuesInvoice: invoicing);
+          }
         } on CourierPayException catch (error) {
           throw StaffAccountException(rolesChanged
               ? 'Roller güncellendi, ücret kaydedilemedi: ${error.message}'
               : error.message);
         }
       }
-      return pay == null
-          ? 'Roller güncellendi.'
-          : (rolesChanged
-              ? 'Roller ve ücret güncellendi.'
-              : 'Ücret güncellendi.');
+      if (pay == null && invoicing == null) return 'Roller güncellendi.';
+      return rolesChanged
+          ? 'Roller ve ücret bilgileri güncellendi.'
+          : 'Ücret bilgileri güncellendi.';
     });
   }
 

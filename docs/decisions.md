@@ -21623,3 +21623,22 @@ owner):**
   on a card-at-the-door order (bank or meal card) requires the courier to confirm it has the POS device;
   this check lives in the app only. The old in-memory pay screen and the use cases only it used were
   deleted.
+
+**Update 2026-11-15 — stage 6A, courier invoices and payments (product owner approved):**
+
+- **Invoices lock lines, not dates.** An invoice covers every earning line up to its end date that no
+  other non-rejected invoice covers. A period overlapping such an invoice is refused, and a rejection
+  (with a reason) frees the lines. A late line dated inside an invoiced period goes into the next invoice
+  instead of being lost.
+- **The invoice amount may differ from the computed earnings** (VAT, withholding); the reviewer sees the
+  difference.
+- **Who does what:** a manager of the courier's branches or an admin/owner approves or rejects; only an
+  admin/owner records money out (invoice payments, advances, reversals). Payments are never edited: a
+  correction is a reversal entry.
+- **Balance** = all earnings − all payments, kept as running totals on the pay profile.
+- **Files** live under `tenants/{org}/courierDocuments/{uid}/{grantId}`, written once under a one-use
+  server grant (≤ 5 MB, PDF/JPEG/PNG) and never readable by a client; the panel receives them through a
+  branch-checked callable, so the Windows POS needs no Storage plugin.
+- **New dependency:** `file_selector` (official flutter.dev) to pick the invoice PDF; `image_picker`
+  cannot pick documents.
+- **Reports** may cover up to 366 days.

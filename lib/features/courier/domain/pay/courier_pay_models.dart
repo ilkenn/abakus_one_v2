@@ -58,6 +58,7 @@ class CourierPayRateInput {
     required this.perPackageMinorUnits,
     this.hourlyMinorUnits,
     this.effectiveFromDate,
+    this.issuesInvoice,
   });
 
   final CourierPayKind kind;
@@ -65,11 +66,15 @@ class CourierPayRateInput {
   final int? hourlyMinorUnits;
   final String? effectiveFromDate;
 
+  /// Stage 6A — "Fatura Keser", sent with the first rate ("Personel Ekle").
+  final bool? issuesInvoice;
+
   Map<String, dynamic> toJson() => {
         'courierKind': kind.name,
         'perPackageMinorUnits': perPackageMinorUnits,
         if (kind == CourierPayKind.shop) 'hourlyMinorUnits': hourlyMinorUnits,
         if (effectiveFromDate != null) 'effectiveFromDate': effectiveFromDate,
+        if (issuesInvoice != null) 'issuesInvoice': issuesInvoice,
       };
 
   /// Whether this input would change [current] (a different kind or amount).
@@ -221,6 +226,214 @@ class CourierEarningsTotals {
       );
 }
 
+/// Stage 6A — what the courier has earned in total, been paid in total, and
+/// is still owed ("Kalan Bakiye"), across all time.
+class CourierBalance {
+  const CourierBalance({
+    required this.earnedTotalMinorUnits,
+    required this.paidTotalMinorUnits,
+    required this.balanceMinorUnits,
+  });
+
+  final int earnedTotalMinorUnits;
+  final int paidTotalMinorUnits;
+  final int balanceMinorUnits;
+
+  factory CourierBalance.fromJson(Map<String, dynamic> json) => CourierBalance(
+        earnedTotalMinorUnits: _int(json['earnedTotalMinorUnits']),
+        paidTotalMinorUnits: _int(json['paidTotalMinorUnits']),
+        balanceMinorUnits: _int(json['balanceMinorUnits']),
+      );
+}
+
+enum CourierInvoiceStatus {
+  submitted,
+  approved,
+  partiallyPaid,
+  paid,
+  rejected;
+
+  String get label => switch (this) {
+        CourierInvoiceStatus.submitted => 'Onay Bekliyor',
+        CourierInvoiceStatus.approved => 'Onaylandı',
+        CourierInvoiceStatus.partiallyPaid => 'Kısmi Ödendi',
+        CourierInvoiceStatus.paid => 'Ödendi',
+        CourierInvoiceStatus.rejected => 'Reddedildi',
+      };
+
+  /// An approved invoice that still has something left to pay.
+  bool get payable =>
+      this == CourierInvoiceStatus.approved ||
+      this == CourierInvoiceStatus.partiallyPaid;
+
+  static CourierInvoiceStatus parse(Object? raw) =>
+      CourierInvoiceStatus.values.firstWhere((s) => s.name == raw,
+          orElse: () => CourierInvoiceStatus.submitted);
+}
+
+class CourierInvoice {
+  const CourierInvoice({
+    required this.invoiceId,
+    required this.staffUid,
+    required this.courierName,
+    required this.periodFrom,
+    required this.periodTo,
+    required this.lineCount,
+    required this.earnedMinorUnits,
+    required this.invoiceAmountMinorUnits,
+    required this.invoiceNumber,
+    required this.note,
+    required this.contentType,
+    required this.status,
+    required this.rejectReason,
+    required this.paidMinorUnits,
+    required this.remainingMinorUnits,
+  });
+
+  final String invoiceId;
+  final String staffUid;
+  final String courierName;
+  final String periodFrom;
+  final String periodTo;
+  final int lineCount;
+
+  /// What the system computed for the invoiced lines.
+  final int earnedMinorUnits;
+
+  /// What the invoice says (VAT, withholding may make it differ).
+  final int invoiceAmountMinorUnits;
+  final String invoiceNumber;
+  final String? note;
+  final String contentType;
+  final CourierInvoiceStatus status;
+  final String? rejectReason;
+  final int paidMinorUnits;
+  final int remainingMinorUnits;
+
+  int get differenceMinorUnits => invoiceAmountMinorUnits - earnedMinorUnits;
+  bool get isPdf => contentType == 'application/pdf';
+  String get period => '$periodFrom – $periodTo';
+
+  factory CourierInvoice.fromJson(Map<String, dynamic> json) => CourierInvoice(
+        invoiceId: json['invoiceId'] as String? ?? '',
+        staffUid: json['staffUid'] as String? ?? '',
+        courierName: json['courierName'] as String? ?? '',
+        periodFrom: json['periodFrom'] as String? ?? '',
+        periodTo: json['periodTo'] as String? ?? '',
+        lineCount: _int(json['lineCount']),
+        earnedMinorUnits: _int(json['earnedMinorUnits']),
+        invoiceAmountMinorUnits: _int(json['invoiceAmountMinorUnits']),
+        invoiceNumber: json['invoiceNumber'] as String? ?? '',
+        note: json['note'] as String?,
+        contentType: json['contentType'] as String? ?? '',
+        status: CourierInvoiceStatus.parse(json['status']),
+        rejectReason: json['rejectReason'] as String?,
+        paidMinorUnits: _int(json['paidMinorUnits']),
+        remainingMinorUnits: _int(json['remainingMinorUnits']),
+      );
+}
+
+enum CourierPaymentKind {
+  invoicePayment,
+  advance,
+  reversal;
+
+  String get label => switch (this) {
+        CourierPaymentKind.invoicePayment => 'Fatura Ödemesi',
+        CourierPaymentKind.advance => 'Avans',
+        CourierPaymentKind.reversal => 'Düzeltme (geri alındı)',
+      };
+
+  static CourierPaymentKind parse(Object? raw) =>
+      CourierPaymentKind.values.firstWhere((k) => k.name == raw,
+          orElse: () => CourierPaymentKind.advance);
+}
+
+class CourierPayment {
+  const CourierPayment({
+    required this.paymentId,
+    required this.kind,
+    required this.amountMinorUnits,
+    required this.paidDate,
+    required this.invoiceId,
+    required this.reversed,
+    required this.note,
+  });
+
+  final String paymentId;
+  final CourierPaymentKind kind;
+
+  /// Negative for a reversal.
+  final int amountMinorUnits;
+  final String paidDate;
+  final String? invoiceId;
+
+  /// Already undone by a later reversal.
+  final bool reversed;
+  final String? note;
+
+  bool get reversible => kind != CourierPaymentKind.reversal && !reversed;
+
+  factory CourierPayment.fromJson(Map<String, dynamic> json) => CourierPayment(
+        paymentId: json['paymentId'] as String? ?? '',
+        kind: CourierPaymentKind.parse(json['kind']),
+        amountMinorUnits: _int(json['amountMinorUnits']),
+        paidDate: json['paidDate'] as String? ?? '',
+        invoiceId: json['invoiceId'] as String?,
+        reversed: json['reversedByPaymentId'] is String,
+        note: json['note'] as String?,
+      );
+}
+
+/// "Fatura Yükle" step 1: what a period would invoice.
+class CourierInvoicePreview {
+  const CourierInvoicePreview({
+    required this.lineCount,
+    required this.earnedMinorUnits,
+    required this.carriedLineCount,
+    required this.overlapping,
+  });
+
+  final int lineCount;
+  final int earnedMinorUnits;
+
+  /// Lines from before the period that were never invoiced.
+  final int carriedLineCount;
+
+  /// Another active invoice already covers part of the period.
+  final bool overlapping;
+
+  factory CourierInvoicePreview.fromJson(Map<String, dynamic> json) =>
+      CourierInvoicePreview(
+        lineCount: _int(json['lineCount']),
+        earnedMinorUnits: _int(json['earnedMinorUnits']),
+        carriedLineCount: _int(json['carriedLineCount']),
+        overlapping: json['overlappingInvoiceId'] is String,
+      );
+}
+
+/// The invoices the panel lists, and whether the caller may pay them.
+class CourierInvoiceList {
+  const CourierInvoiceList({
+    required this.invoices,
+    required this.canRecordPayments,
+  });
+
+  final List<CourierInvoice> invoices;
+  final bool canRecordPayments;
+}
+
+/// The staff edit form's view of a courier's pay.
+class CourierPayProfileSummary {
+  const CourierPayProfileSummary({
+    required this.currentRate,
+    required this.issuesInvoice,
+  });
+
+  final CourierPayRate? currentRate;
+  final bool issuesInvoice;
+}
+
 /// One courier's earnings in a period (manager/admin view).
 class CourierEarningsEntry {
   const CourierEarningsEntry({
@@ -228,12 +441,24 @@ class CourierEarningsEntry {
     required this.courierName,
     required this.totals,
     required this.lines,
+    this.issuesInvoice = false,
+    this.paidInPeriodMinorUnits = 0,
+    this.balance = const CourierBalance(
+      earnedTotalMinorUnits: 0,
+      paidTotalMinorUnits: 0,
+      balanceMinorUnits: 0,
+    ),
+    this.payments = const [],
   });
 
   final String staffUid;
   final String courierName;
   final CourierEarningsTotals totals;
   final List<CourierEarningLine> lines;
+  final bool issuesInvoice;
+  final int paidInPeriodMinorUnits;
+  final CourierBalance balance;
+  final List<CourierPayment> payments;
 
   factory CourierEarningsEntry.fromJson(Map<String, dynamic> json) =>
       CourierEarningsEntry(
@@ -241,6 +466,12 @@ class CourierEarningsEntry {
         courierName: json['courierName'] as String? ?? '',
         totals: CourierEarningsTotals.fromJson(json),
         lines: _lines(json['lines']),
+        issuesInvoice: json['issuesInvoice'] == true,
+        paidInPeriodMinorUnits: _int(json['paidInPeriodMinorUnits']),
+        balance: CourierBalance.fromJson(json),
+        payments: [
+          for (final p in _maps(json['payments'])) CourierPayment.fromJson(p)
+        ],
       );
 }
 
@@ -249,20 +480,26 @@ class CourierEarningsReport {
     required this.totalMinorUnits,
     required this.truncated,
     required this.couriers,
+    this.paidInPeriodMinorUnits = 0,
+    this.canRecordPayments = false,
   });
 
   final int totalMinorUnits;
   final bool truncated;
   final List<CourierEarningsEntry> couriers;
+  final int paidInPeriodMinorUnits;
+  final bool canRecordPayments;
 
   factory CourierEarningsReport.fromJson(Map<String, dynamic> json) =>
       CourierEarningsReport(
         totalMinorUnits: _int(json['totalMinorUnits']),
         truncated: json['truncated'] == true,
         couriers: [
-          for (final c in (json['couriers'] as List? ?? const []))
-            CourierEarningsEntry.fromJson(Map<String, dynamic>.from(c as Map)),
+          for (final c in _maps(json['couriers']))
+            CourierEarningsEntry.fromJson(c),
         ],
+        paidInPeriodMinorUnits: _int(json['paidInPeriodMinorUnits']),
+        canRecordPayments: json['canRecordPayments'] == true,
       );
 }
 
@@ -274,6 +511,15 @@ class MyCourierPay {
     required this.openShift,
     required this.totals,
     required this.lines,
+    this.issuesInvoice = false,
+    this.paidInPeriodMinorUnits = 0,
+    this.balance = const CourierBalance(
+      earnedTotalMinorUnits: 0,
+      paidTotalMinorUnits: 0,
+      balanceMinorUnits: 0,
+    ),
+    this.payments = const [],
+    this.invoices = const [],
   });
 
   final bool shiftsEnabled;
@@ -281,6 +527,11 @@ class MyCourierPay {
   final CourierShift? openShift;
   final CourierEarningsTotals totals;
   final List<CourierEarningLine> lines;
+  final bool issuesInvoice;
+  final int paidInPeriodMinorUnits;
+  final CourierBalance balance;
+  final List<CourierPayment> payments;
+  final List<CourierInvoice> invoices;
 
   factory MyCourierPay.fromJson(Map<String, dynamic> json) => MyCourierPay(
         shiftsEnabled: json['shiftsEnabled'] == true,
@@ -294,8 +545,23 @@ class MyCourierPay {
             : null,
         totals: CourierEarningsTotals.fromJson(json),
         lines: _lines(json['lines']),
+        issuesInvoice: json['issuesInvoice'] == true,
+        paidInPeriodMinorUnits: _int(json['paidInPeriodMinorUnits']),
+        balance: CourierBalance.fromJson(json),
+        payments: [
+          for (final p in _maps(json['payments'])) CourierPayment.fromJson(p)
+        ],
+        invoices: [
+          for (final i in _maps(json['invoices'])) CourierInvoice.fromJson(i)
+        ],
       );
 }
+
+/// A report period: Istanbul calendar days, both ends included.
+typedef CourierPayRange = ({String fromDate, String toDate});
+
+/// The longest period a report or an invoice may cover (a year).
+const courierPayMaxRangeDays = 366;
 
 /// The period chips of both earnings views.
 enum CourierPayPeriod {
@@ -375,6 +641,11 @@ String minorUnitsToLiraText(int minorUnits) {
 }
 
 int _int(Object? raw) => (raw as num?)?.toInt() ?? 0;
+
+List<Map<String, dynamic>> _maps(Object? raw) => [
+      for (final item in (raw as List? ?? const []))
+        Map<String, dynamic>.from(item as Map),
+    ];
 
 DateTime? _time(Object? raw) => raw is num
     ? DateTime.fromMillisecondsSinceEpoch(raw.toInt(), isUtc: true).toLocal()

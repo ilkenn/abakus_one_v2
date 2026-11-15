@@ -173,8 +173,37 @@ service firebase.storage {
         firestore.get(grantPath).data.expiresAt > request.time;
     }
 
+    // ADR-085 stage 6A — a courier's documents (invoices now, payment-slip
+    // photos in 6B). One-use grant written by the server
+    // (`requestCourierUploadGrant`, `functions/src/courierInvoices.ts`):
+    // the owner, the exact path, still issued, not expired, and the granted
+    // content type. Nobody reads or deletes from a client — reviewers get
+    // the file through `getCourierInvoiceFile`, which checks their branch.
+    function hasValidCourierUploadGrant(organizationId, uid, grantId) {
+      let grantPath = /databases/(default)/documents/courierUploadGrants/$(grantId);
+      return firestore.exists(grantPath) &&
+        firestore.get(grantPath).data.staffUid == uid &&
+        firestore.get(grantPath).data.organizationId == organizationId &&
+        firestore.get(grantPath).data.objectPath ==
+          'tenants/' + organizationId + '/courierDocuments/' + uid + '/' + grantId &&
+        firestore.get(grantPath).data.status == 'issued' &&
+        firestore.get(grantPath).data.expiresAt > request.time &&
+        firestore.get(grantPath).data.contentType == request.resource.contentType;
+    }
+
     // Customer feedback attachments — same ownership/size/MIME shape as
     // customer photos.
+    match /tenants/{organizationId}/courierDocuments/{uid}/{grantId} {
+      allow read: if false;
+      allow write: if isOwner(uid) &&
+        resource == null &&
+        request.resource.size < 5 * 1024 * 1024 &&
+        (request.resource.contentType.matches('image/(jpeg|png)') ||
+          request.resource.contentType == 'application/pdf') &&
+        hasValidCourierUploadGrant(organizationId, uid, grantId);
+      allow delete: if false;
+    }
+
     match /tenants/{organizationId}/feedbackAttachments/{uid}/{fileName} {
       allow read: if isOrgMember(organizationId) || isOwner(uid);
       allow write: if isOwner(uid) && isValidCustomerImageUpload();

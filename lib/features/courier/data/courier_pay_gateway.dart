@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:firebase_storage/firebase_storage.dart' as storage;
 import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
+    show TargetPlatform, Uint8List, defaultTargetPlatform, kIsWeb;
 
 import '../../../core/services/functions/rest_callable_client.dart';
 import '../domain/pay/courier_pay_models.dart';
@@ -17,10 +20,64 @@ class CourierPayException implements Exception {
 /// server decides who may set a rate, approve a shift or see an earning;
 /// this client only carries the request.
 abstract interface class CourierPayGateway {
-  /// The rate in force for a courier staff account, or `null`.
-  Future<CourierPayRate?> currentRate({
+  /// The rate in force for a courier staff account (or `null`) and whether
+  /// it sends invoices ("Fatura Keser").
+  Future<CourierPayProfileSummary> payProfile({
     required String organizationId,
     required String targetUid,
+  });
+
+  /// Stage 6A — the staff form's "Fatura Keser" switch.
+  Future<void> setInvoicing({
+    required String organizationId,
+    required String targetUid,
+    required bool issuesInvoice,
+  });
+
+  /// Stage 6A — "Fatura Yükle" step 1 (the signed-in courier).
+  Future<CourierInvoicePreview> previewInvoice({
+    required String periodFrom,
+    required String periodTo,
+  });
+
+  /// Stage 6A — uploads the file under a one-use grant, then sends the
+  /// invoice. [contentType] is `application/pdf`, `image/jpeg` or `image/png`.
+  Future<CourierInvoice> submitInvoice({
+    required String periodFrom,
+    required String periodTo,
+    required int invoiceAmountMinorUnits,
+    required String invoiceNumber,
+    required String note,
+    required Uint8List bytes,
+    required String contentType,
+  });
+
+  Future<CourierInvoiceList> listInvoices({required String organizationId});
+
+  Future<void> reviewInvoice({
+    required String organizationId,
+    required String invoiceId,
+    required bool approve,
+    String? reason,
+  });
+
+  /// Money out (admin/owner): an invoice payment ([full] = the remainder),
+  /// an advance to [targetUid], or the reversal of [reversesPaymentId].
+  Future<void> recordPayment({
+    required String organizationId,
+    required CourierPaymentKind kind,
+    String? invoiceId,
+    String? targetUid,
+    String? reversesPaymentId,
+    int? amountMinorUnits,
+    bool full = false,
+    String? paidDate,
+    String? note,
+  });
+
+  /// The invoice's file (the sender's own, or a reviewer's branch).
+  Future<({Uint8List bytes, String contentType})> invoiceFile({
+    required String invoiceId,
   });
 
   Future<void> setRate({
@@ -118,6 +175,38 @@ class FirebaseCourierPayGateway implements CourierPayGateway {
         return 'Vardiyanın bittiği saati seçin.';
       case 'courierShift/too-long':
         return 'Bir vardiya en fazla 24 saat sürebilir.';
+      case 'courierInvoice/not-invoicing':
+        return 'Fatura kesen kurye olarak tanımlı değilsiniz. Şube müdürünüze '
+            'başvurun.';
+      case 'courierInvoice/period-overlap':
+        return 'Bu dönemin bir kısmı için zaten fatura gönderilmiş.';
+      case 'courierInvoice/no-lines':
+        return 'Bu dönemde faturalanacak kazanç yok.';
+      case 'courierInvoice/invalid-period':
+        return 'Dönemi kontrol edin: bugünden ileri olamaz, en fazla bir yıl.';
+      case 'courierInvoice/invalid-amount':
+      case 'courierPayment/invalid-amount':
+        return 'Geçerli bir tutar girin.';
+      case 'courierInvoice/invalid-file':
+        return 'Fatura dosyası PDF, JPEG ya da PNG olmalı (en fazla 5 MB).';
+      case 'courierInvoice/file-missing':
+        return 'Fatura dosyası yüklenemedi. Tekrar deneyin.';
+      case 'courierInvoice/grant-used':
+        return 'Bu yükleme zaten kullanıldı. Dosyayı tekrar seçin.';
+      case 'courierInvoice/reason-required':
+        return 'Reddetmek için gerekçe yazın.';
+      case 'courierInvoice/not-pending':
+        return 'Bu fatura artık onay beklemiyor.';
+      case 'courierPayment/admin-only':
+        return 'Ödeme ve avans girişini yalnızca Yönetici veya Sahip yapabilir.';
+      case 'courierPayment/invoice-not-approved':
+        return 'Yalnızca onaylanmış bir fatura ödenebilir.';
+      case 'courierPayment/over-invoice':
+        return 'Ödeme, faturada kalan tutardan fazla olamaz.';
+      case 'courierPayment/future-date':
+        return 'Ödeme tarihi ileri bir tarih olamaz.';
+      case 'courierPayment/already-reversed':
+        return 'Bu ödeme zaten geri alındı.';
     }
     switch (code) {
       case 'permission-denied':
@@ -162,7 +251,7 @@ class FirebaseCourierPayGateway implements CourierPayGateway {
   }
 
   @override
-  Future<CourierPayRate?> currentRate({
+  Future<CourierPayProfileSummary> payProfile({
     required String organizationId,
     required String targetUid,
   }) async {
@@ -171,9 +260,141 @@ class FirebaseCourierPayGateway implements CourierPayGateway {
       'targetUid': targetUid,
     });
     final current = result['current'];
-    return current is Map
-        ? CourierPayRate.fromJson(Map<String, dynamic>.from(current))
-        : null;
+    return CourierPayProfileSummary(
+      currentRate: current is Map
+          ? CourierPayRate.fromJson(Map<String, dynamic>.from(current))
+          : null,
+      issuesInvoice: result['issuesInvoice'] == true,
+    );
+  }
+
+  @override
+  Future<void> setInvoicing({
+    required String organizationId,
+    required String targetUid,
+    required bool issuesInvoice,
+  }) async {
+    await _call('setCourierInvoicing', {
+      'organizationId': organizationId,
+      'targetUid': targetUid,
+      'issuesInvoice': issuesInvoice,
+    });
+  }
+
+  @override
+  Future<CourierInvoicePreview> previewInvoice({
+    required String periodFrom,
+    required String periodTo,
+  }) async =>
+      CourierInvoicePreview.fromJson(await _call('previewCourierInvoice', {
+        'periodFrom': periodFrom,
+        'periodTo': periodTo,
+      }));
+
+  @override
+  Future<CourierInvoice> submitInvoice({
+    required String periodFrom,
+    required String periodTo,
+    required int invoiceAmountMinorUnits,
+    required String invoiceNumber,
+    required String note,
+    required Uint8List bytes,
+    required String contentType,
+  }) async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      throw const CourierPayException(
+          'Fatura yalnızca kurye uygulamasından (telefondan) yüklenebilir.');
+    }
+    final grant = await _call('requestCourierUploadGrant', {
+      'purpose': 'invoice',
+      'contentType': contentType,
+    });
+    try {
+      await storage.FirebaseStorage.instance
+          .ref(grant['objectPath'] as String)
+          .putData(bytes, storage.SettableMetadata(contentType: contentType));
+    } on storage.FirebaseException {
+      throw const CourierPayException(
+          'Fatura dosyası yüklenemedi. Bağlantınızı kontrol edip tekrar '
+          'deneyin.');
+    }
+    final result = await _call('submitCourierInvoice', {
+      'grantId': grant['grantId'],
+      'periodFrom': periodFrom,
+      'periodTo': periodTo,
+      'invoiceAmountMinorUnits': invoiceAmountMinorUnits,
+      'invoiceNumber': invoiceNumber,
+      if (note.trim().isNotEmpty) 'note': note.trim(),
+    });
+    return CourierInvoice.fromJson(
+        Map<String, dynamic>.from(result['invoice'] as Map));
+  }
+
+  @override
+  Future<CourierInvoiceList> listInvoices({
+    required String organizationId,
+  }) async {
+    final result =
+        await _call('listCourierInvoices', {'organizationId': organizationId});
+    return CourierInvoiceList(
+      invoices: [
+        for (final invoice in (result['invoices'] as List? ?? const []))
+          CourierInvoice.fromJson(Map<String, dynamic>.from(invoice as Map)),
+      ],
+      canRecordPayments: result['canRecordPayments'] == true,
+    );
+  }
+
+  @override
+  Future<void> reviewInvoice({
+    required String organizationId,
+    required String invoiceId,
+    required bool approve,
+    String? reason,
+  }) async {
+    await _call('reviewCourierInvoice', {
+      'organizationId': organizationId,
+      'invoiceId': invoiceId,
+      'decision': approve ? 'approve' : 'reject',
+      if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+    });
+  }
+
+  @override
+  Future<void> recordPayment({
+    required String organizationId,
+    required CourierPaymentKind kind,
+    String? invoiceId,
+    String? targetUid,
+    String? reversesPaymentId,
+    int? amountMinorUnits,
+    bool full = false,
+    String? paidDate,
+    String? note,
+  }) async {
+    await _call('recordCourierPayment', {
+      'organizationId': organizationId,
+      'kind': kind.name,
+      if (invoiceId != null) 'invoiceId': invoiceId,
+      if (targetUid != null) 'targetUid': targetUid,
+      if (reversesPaymentId != null) 'reversesPaymentId': reversesPaymentId,
+      if (amountMinorUnits != null) 'amountMinorUnits': amountMinorUnits,
+      if (full) 'full': true,
+      if (paidDate != null) 'paidDate': paidDate,
+      if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+    });
+  }
+
+  @override
+  Future<({Uint8List bytes, String contentType})> invoiceFile({
+    required String invoiceId,
+  }) async {
+    final result =
+        await _call('getCourierInvoiceFile', {'invoiceId': invoiceId});
+    return (
+      bytes: base64Decode(result['base64'] as String? ?? ''),
+      contentType: result['contentType'] as String? ?? '',
+    );
   }
 
   @override
@@ -274,9 +495,71 @@ class UnavailableCourierPayGateway implements CourierPayGateway {
       'Sunucu bağlantısı hazır değil. Lütfen tekrar deneyin.');
 
   @override
-  Future<CourierPayRate?> currentRate({
+  Future<CourierPayProfileSummary> payProfile({
     required String organizationId,
     required String targetUid,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<void> setInvoicing({
+    required String organizationId,
+    required String targetUid,
+    required bool issuesInvoice,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<CourierInvoicePreview> previewInvoice({
+    required String periodFrom,
+    required String periodTo,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<CourierInvoice> submitInvoice({
+    required String periodFrom,
+    required String periodTo,
+    required int invoiceAmountMinorUnits,
+    required String invoiceNumber,
+    required String note,
+    required Uint8List bytes,
+    required String contentType,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<CourierInvoiceList> listInvoices({
+    required String organizationId,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<void> reviewInvoice({
+    required String organizationId,
+    required String invoiceId,
+    required bool approve,
+    String? reason,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<void> recordPayment({
+    required String organizationId,
+    required CourierPaymentKind kind,
+    String? invoiceId,
+    String? targetUid,
+    String? reversesPaymentId,
+    int? amountMinorUnits,
+    bool full = false,
+    String? paidDate,
+    String? note,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<({Uint8List bytes, String contentType})> invoiceFile({
+    required String invoiceId,
   }) async =>
       throw _error;
 

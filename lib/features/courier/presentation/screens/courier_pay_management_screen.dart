@@ -12,14 +12,20 @@ import '../../data/courier_pay_gateway.dart';
 import '../../domain/pay/courier_pay_models.dart';
 import '../providers/courier_pay_providers.dart';
 import '../widgets/courier_earnings_tab.dart';
+import '../widgets/courier_invoice_review_tab.dart';
+import '../widgets/courier_pay_period_bar.dart';
 
 /// ADR-085 stage 5 — "Kurye Vardiya & Kazanç" in the panel (manager,
 /// admin, owner). **Vardiya Onayları**: the shifts couriers started or
 /// ended, to approve, correct (with a reason) or — for a start — reject.
-/// **Kazançlar**: each courier's earnings for today, this week or this
-/// month. A running shift the courier forgot to end can be ended here
-/// ("Vardiyayı Sonlandır": end time + reason). The server limits both to the caller's branches (a manager) or
-/// the whole organization (an admin/owner).
+/// **Kazançlar**: each courier's earnings for today, this week, this month
+/// or any range (stage 6A), with what was paid and the balance still owed;
+/// an admin/owner records advances and reverses payments here.
+/// **Faturalar** (stage 6A): the invoices couriers sent — review, then pay.
+/// A running shift the courier forgot to end can be ended here
+/// ("Vardiyayı Sonlandır": end time + reason). The server limits everything
+/// to the caller's branches (a manager) or the whole organization (an
+/// admin/owner).
 class CourierPayManagementScreen extends StatelessWidget {
   const CourierPayManagementScreen({super.key, required this.organizationId});
 
@@ -28,7 +34,7 @@ class CourierPayManagementScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         backgroundColor: AppColors.background,
         appBar: AppBar(
@@ -39,12 +45,14 @@ class CourierPayManagementScreen extends StatelessWidget {
           bottom: const TabBar(tabs: [
             Tab(key: Key('tabShiftApprovals'), text: 'Vardiya Onayları'),
             Tab(key: Key('tabCourierEarnings'), text: 'Kazançlar'),
+            Tab(key: Key('tabCourierInvoices'), text: 'Faturalar'),
           ]),
         ),
         body: SafeArea(
           child: TabBarView(children: [
             _ShiftApprovalsTab(organizationId: organizationId),
             _EarningsTab(organizationId: organizationId),
+            CourierInvoiceReviewTab(organizationId: organizationId),
           ]),
         ),
       ),
@@ -73,7 +81,7 @@ class _ShiftApprovalsTabState extends ConsumerState<_ShiftApprovalsTab> {
   }) async {
     if (_busyShiftId != null) return;
     setState(() => _busyShiftId = shift.shiftId);
-    final messenger = ScaffoldMessenger.of(context);
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
     try {
       await ref.read(courierPayGatewayProvider).reviewShift(
             organizationId: widget.organizationId,
@@ -116,7 +124,7 @@ class _ShiftApprovalsTabState extends ConsumerState<_ShiftApprovalsTab> {
     );
     if (result == null || !mounted || _busyShiftId != null) return;
     setState(() => _busyShiftId = shift.shiftId);
-    final messenger = ScaffoldMessenger.of(context);
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
     try {
       await ref.read(courierPayGatewayProvider).closeShift(
             organizationId: widget.organizationId,
@@ -566,11 +574,86 @@ class _EarningsTab extends ConsumerStatefulWidget {
 }
 
 class _EarningsTabState extends ConsumerState<_EarningsTab> {
-  CourierPayPeriod _period = CourierPayPeriod.today;
+  CourierPayPeriod? _period = CourierPayPeriod.today;
+  late CourierPayRange _range =
+      CourierPayPeriod.today.range(ref.read(courierPayClockProvider)());
+
+  CourierEarningsScope get _scope =>
+      (organizationId: widget.organizationId, range: _range);
+
+  /// Stage 6A — "Avans Gir" (admin/owner): an amount, a date, a note.
+  Future<void> _advance(CourierEarningsEntry courier) async {
+    final result = await showDialog<({int amount, String date, String note})>(
+      context: context,
+      builder: (_) => CourierPaymentDialog(
+        title: '${courier.courierName} — Avans / Ödeme Gir',
+      ),
+    );
+    if (result == null || !mounted) return;
+    await _pay(
+      () => ref.read(courierPayGatewayProvider).recordPayment(
+            organizationId: widget.organizationId,
+            kind: CourierPaymentKind.advance,
+            targetUid: courier.staffUid,
+            amountMinorUnits: result.amount,
+            paidDate: result.date,
+            note: result.note,
+          ),
+      '${courier.courierName}: ${formatPayAmount(result.amount)} işlendi.',
+    );
+  }
+
+  Future<void> _reverse(CourierPayment payment) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Ödemeyi Geri Al'),
+        content:
+            Text('${formatPayAmount(payment.amountMinorUnits)} tutarındaki '
+                '${payment.kind.label.toLowerCase()} geri alınacak; kayıt '
+                'silinmez, ters bir kayıt eklenir.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Vazgeç'),
+          ),
+          ElevatedButton(
+            key: const Key('reversePaymentConfirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Geri Al'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _pay(
+      () => ref.read(courierPayGatewayProvider).recordPayment(
+            organizationId: widget.organizationId,
+            kind: CourierPaymentKind.reversal,
+            reversesPaymentId: payment.paymentId,
+          ),
+      'Ödeme geri alındı.',
+    );
+  }
+
+  Future<void> _pay(Future<void> Function() action, String success) async {
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    try {
+      await action();
+      messenger.showSnackBar(SnackBar(content: Text(success)));
+      ref.invalidate(courierEarningsReportProvider);
+      ref.invalidate(courierInvoicesProvider);
+    } on CourierPayException catch (error) {
+      messenger.showSnackBar(SnackBar(
+        content: Text(error.message),
+        backgroundColor: AppColors.error,
+      ));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final scope = (organizationId: widget.organizationId, period: _period);
+    final scope = _scope;
     final reportAsync = ref.watch(courierEarningsReportProvider(scope));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -578,17 +661,15 @@ class _EarningsTabState extends ConsumerState<_EarningsTab> {
         Padding(
           padding: const EdgeInsets.fromLTRB(
               AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, 0),
-          child: Wrap(
-            spacing: AppSpacing.sm,
-            children: [
-              for (final period in CourierPayPeriod.values)
-                ChoiceChip(
-                  key: Key('panelEarningsPeriod-${period.name}'),
-                  label: Text(period.label),
-                  selected: _period == period,
-                  onSelected: (_) => setState(() => _period = period),
-                ),
-            ],
+          child: CourierPayPeriodBar(
+            keyPrefix: 'panelEarningsPeriod',
+            selected: _period,
+            range: _range,
+            now: ref.read(courierPayClockProvider)(),
+            onChanged: (period, range) => setState(() {
+              _period = period;
+              _range = range;
+            }),
           ),
         ),
         Expanded(
@@ -619,6 +700,12 @@ class _EarningsTabState extends ConsumerState<_EarningsTab> {
                     key: const Key('panelEarningsTotal'),
                     style: AppTypography.titleLarge,
                   ),
+                  Text(
+                    'Bu dönemde ödenen: '
+                    '${formatPayAmount(report.paidInPeriodMinorUnits)}',
+                    key: const Key('panelPaidInPeriod'),
+                    style: AppTypography.bodyMedium,
+                  ),
                   if (report.truncated)
                     Text(
                       'Kayıt sayısı çok fazla; daha kısa bir dönem seçin.',
@@ -638,7 +725,12 @@ class _EarningsTabState extends ConsumerState<_EarningsTab> {
                           subtitle: Text(
                             '${courier.totals.packageCount} paket · '
                             '${formatShiftMinutes(courier.totals.shiftMinutes)}'
-                            ' vardiya',
+                            ' vardiya · Ödenen '
+                            '${formatPayAmount(courier.paidInPeriodMinorUnits)}'
+                            ' · Kalan Bakiye '
+                            '${formatPayAmount(courier.balance.balanceMinorUnits)}',
+                            key: Key(
+                                'courierEarningsSummary-${courier.staffUid}'),
                             style: AppTypography.bodySmall
                                 .copyWith(color: AppColors.textSecondary),
                           ),
@@ -649,6 +741,23 @@ class _EarningsTabState extends ConsumerState<_EarningsTab> {
                           childrenPadding: const EdgeInsets.symmetric(
                               horizontal: AppSpacing.md),
                           children: [
+                            if (report.canRecordPayments)
+                              Align(
+                                alignment: AlignmentDirectional.centerStart,
+                                child: OutlinedButton.icon(
+                                  key: Key('advance-${courier.staffUid}'),
+                                  onPressed: () => _advance(courier),
+                                  icon: const Icon(Icons.add_card_outlined),
+                                  label: const Text('Avans / Ödeme Gir'),
+                                ),
+                              ),
+                            for (final payment in courier.payments)
+                              CourierPaymentTile(
+                                payment: payment,
+                                onReverse: report.canRecordPayments
+                                    ? () => _reverse(payment)
+                                    : null,
+                              ),
                             for (final line in courier.lines)
                               CourierEarningLineTile(line: line),
                           ],

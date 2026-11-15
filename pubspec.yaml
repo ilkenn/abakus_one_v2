@@ -18,6 +18,10 @@ dependencies:
   # transitive dependency of `win32`, promoted to direct since
   # `windows_raw_printer_adapter.dart` imports it by name.
   ffi: ^2.2.0
+  # 2026-11-15 (ADR-085 stage 6A) — the courier picks its invoice PDF
+  # ("Fatura Yükle"); `image_picker` only picks images. Official flutter.dev
+  # package, Android/iOS/desktop.
+  file_selector: ^1.1.0
   firebase_app_check: ^0.4.6
   firebase_auth: ^6.5.7
   firebase_core: ^4.12.1

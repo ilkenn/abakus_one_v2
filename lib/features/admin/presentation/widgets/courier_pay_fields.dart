@@ -7,14 +7,18 @@ import '../../../courier/domain/pay/courier_pay_models.dart';
 
 /// ADR-085 stage 5 — the courier pay part of the staff add/edit forms:
 /// "Dükkan Kuryesi" (hourly + per package) or "Havuz Kuryesi" (per package
-/// only, set by an admin/owner). Owns its text controllers; the form that
-/// creates it disposes it.
+/// only, set by an admin/owner), and — stage 6A — "Fatura Keser" (the
+/// courier sends invoices; otherwise it is only paid/advanced by an
+/// admin/owner). Owns its text controllers; the form that creates it
+/// disposes it.
 class CourierPayDraft {
   CourierPayDraft({
     this.initial,
     required this.allowPool,
     this.withEffectiveDate = false,
+    this.initialIssuesInvoice = false,
   })  : kind = initial?.kind ?? CourierPayKind.shop,
+        issuesInvoice = initialIssuesInvoice,
         perPackage = TextEditingController(
             text: initial == null
                 ? ''
@@ -39,6 +43,10 @@ class CourierPayDraft {
   /// `null` = today.
   DateTime? effectiveFrom;
 
+  /// Stage 6A — "Fatura Keser", as it was and as it is now.
+  final bool initialIssuesInvoice;
+  bool issuesInvoice;
+
   /// A manager sees a pool courier's rate but cannot change it.
   bool get editable => allowPool || initial?.kind != CourierPayKind.pool;
 
@@ -56,6 +64,7 @@ class CourierPayDraft {
       perPackageMinorUnits: perPackageMinor,
       hourlyMinorUnits: kind == CourierPayKind.shop ? hourlyMinor : null,
       effectiveFromDate: from == null ? null : isoDay(from),
+      issuesInvoice: issuesInvoice,
     );
   }
 
@@ -149,6 +158,22 @@ class _CourierPayFieldsState extends State<CourierPayFields> {
             validator: editable ? _amountError : null,
           ),
         ],
+        SwitchListTile(
+          key: const Key('courierIssuesInvoice'),
+          contentPadding: EdgeInsets.zero,
+          value: draft.issuesInvoice,
+          onChanged: editable
+              ? (value) => setState(() => draft.issuesInvoice = value)
+              : null,
+          title: const Text('Fatura Keser'),
+          subtitle: Text(
+            draft.issuesInvoice
+                ? 'Kurye hakedişi için uygulamadan fatura yükler.'
+                : 'Fatura kesmez; ödeme ve avansı Yönetici veya Sahip girer.',
+            style: AppTypography.bodySmall
+                .copyWith(color: AppColors.textSecondary),
+          ),
+        ),
         if (!editable) ...[
           const SizedBox(height: AppSpacing.xs),
           Text(

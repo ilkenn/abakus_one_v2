@@ -1,5 +1,5 @@
 import { onCall, HttpsError, type CallableRequest } from "firebase-functions/v2/https";
-import { getFirestore, Timestamp, type DocumentData, type Firestore, type Transaction } from "firebase-admin/firestore";
+import { FieldValue, getFirestore, Timestamp, type DocumentData, type Firestore, type Transaction } from "firebase-admin/firestore";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { writeAuditEvent } from "./auditEvents";
 import { generateCorrelationId } from "./correlationId";
@@ -39,6 +39,104 @@ export const COURIER_PAY_PROFILES_COLLECTION = "courierPayProfiles";
 export const COURIER_SHIFTS_COLLECTION = "courierShifts";
 export const COURIER_SHIFT_POINTERS_COLLECTION = "courierShiftPointers";
 export const COURIER_EARNINGS_COLLECTION = "courierEarnings";
+/** Stage 6A — invoices a courier sends, and payments/advances recorded against its balance. */
+export const COURIER_INVOICES_COLLECTION = "courierInvoices";
+export const COURIER_PAYMENTS_COLLECTION = "courierPayments";
+
+export type CourierInvoiceStatus = "submitted" | "approved" | "partiallyPaid" | "paid" | "rejected";
+
+export interface CourierInvoiceDoc {
+  organizationId: string;
+  staffUid: string;
+  courierName: string;
+  /** The courier's branches when it was sent (who may review it). */
+  branchIds: string[];
+  periodFrom: string;
+  periodTo: string;
+  /** The earning lines this invoice covers (locked while it is not rejected). */
+  lineIds: string[];
+  lineCount: number;
+  /** What the system computed for those lines. */
+  earnedMinorUnits: number;
+  /** What the invoice says (may differ: VAT, withholding). */
+  invoiceAmountMinorUnits: number;
+  invoiceNumber: string;
+  note: string | null;
+  filePath: string;
+  contentType: string;
+  status: CourierInvoiceStatus;
+  rejectReason: string | null;
+  reviewedByUid: string | null;
+  reviewedAt: Timestamp | null;
+  paidMinorUnits: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export type CourierPaymentKind = "invoicePayment" | "advance" | "reversal";
+
+export interface CourierPaymentDoc {
+  organizationId: string;
+  staffUid: string;
+  courierName: string;
+  branchIds: string[];
+  kind: CourierPaymentKind;
+  /** Negative for a reversal. */
+  amountMinorUnits: number;
+  paidDate: string;
+  invoiceId: string | null;
+  reversesPaymentId: string | null;
+  reversedByPaymentId: string | null;
+  note: string | null;
+  createdByUid: string;
+  createdAt: Timestamp;
+}
+
+export const ACTIVE_INVOICE_STATUSES: readonly CourierInvoiceStatus[] = ["submitted", "approved", "partiallyPaid", "paid"];
+
+export function serializeInvoice(id: string, invoice: CourierInvoiceDoc) {
+  return {
+    invoiceId: id,
+    staffUid: invoice.staffUid,
+    courierName: invoice.courierName,
+    periodFrom: invoice.periodFrom,
+    periodTo: invoice.periodTo,
+    lineCount: invoice.lineCount,
+    earnedMinorUnits: invoice.earnedMinorUnits,
+    invoiceAmountMinorUnits: invoice.invoiceAmountMinorUnits,
+    differenceMinorUnits: invoice.invoiceAmountMinorUnits - invoice.earnedMinorUnits,
+    invoiceNumber: invoice.invoiceNumber,
+    note: invoice.note,
+    contentType: invoice.contentType,
+    status: invoice.status,
+    rejectReason: invoice.rejectReason,
+    paidMinorUnits: invoice.paidMinorUnits,
+    remainingMinorUnits: Math.max(0, invoice.invoiceAmountMinorUnits - invoice.paidMinorUnits),
+    createdAtMillis: invoice.createdAt.toMillis(),
+  };
+}
+
+export function serializePayment(id: string, payment: CourierPaymentDoc) {
+  return {
+    paymentId: id,
+    staffUid: payment.staffUid,
+    courierName: payment.courierName,
+    kind: payment.kind,
+    amountMinorUnits: payment.amountMinorUnits,
+    paidDate: payment.paidDate,
+    invoiceId: payment.invoiceId,
+    reversedByPaymentId: payment.reversedByPaymentId,
+    note: payment.note,
+    createdAtMillis: payment.createdAt.toMillis(),
+  };
+}
+
+/** Running balance: everything earned minus everything paid (advances and reversals included). */
+export function balanceOf(profile: CourierPayProfileDoc | null) {
+  const earned = profile?.earnedTotalMinorUnits ?? 0;
+  const paid = profile?.paidTotalMinorUnits ?? 0;
+  return { earnedTotalMinorUnits: earned, paidTotalMinorUnits: paid, balanceMinorUnits: earned - paid };
+}
 
 export type CourierPayKind = "shop" | "pool";
 
@@ -63,6 +161,13 @@ export interface CourierPayProfileDoc {
   branchIds: string[];
   versions: CourierPayRateVersion[];
   updatedAt: Timestamp;
+  /** Stage 6A — the courier sends an invoice for its earnings ("Fatura Keser"). */
+  issuesInvoice?: boolean;
+  /** Stage 6A — running totals: every earning line written, every payment recorded. */
+  earnedTotalMinorUnits?: number;
+  paidTotalMinorUnits?: number;
+  /** Stage 6A — bumped by every invoice submission (serializes them per courier). */
+  invoiceSequence?: number;
 }
 
 export type CourierShiftStatus = "startRequested" | "active" | "endRequested" | "closed" | "rejected";
@@ -118,7 +223,7 @@ export interface CourierEarningDoc {
 const MAX_RATE_MINOR_UNITS = 10_000_000; // 100.000 TL
 const MAX_REASON_LENGTH = 300;
 const MAX_EFFECTIVE_DAYS_AHEAD = 366;
-const MAX_PERIOD_DAYS = 93;
+const MAX_PERIOD_DAYS = 366; // stage 6A: a yearly report
 const MAX_ADJUST_MS = 12 * 60 * 60 * 1000;
 const MAX_SHIFT_MS = 24 * 60 * 60 * 1000;
 const MAX_EARNING_LINES = 5000;
@@ -262,13 +367,13 @@ function requireString(raw: unknown, field: string): string {
   return (raw as string).trim();
 }
 
-function optionalReason(raw: unknown): string {
+export function optionalReason(raw: unknown): string {
   const reason = typeof raw === "string" ? raw.trim() : "";
   if (reason.length > MAX_REASON_LENGTH) invalid(`reason must be at most ${MAX_REASON_LENGTH} characters.`);
   return reason;
 }
 
-function callerRoles(request: CallableRequest, organizationId: string): string[] | null {
+export function callerRoles(request: CallableRequest, organizationId: string): string[] | null {
   const roles = (request.auth?.token?.roles as Record<string, unknown> | undefined)?.[organizationId];
   return Array.isArray(roles) ? roles.filter((r): r is string => typeof r === "string") : null;
 }
@@ -298,11 +403,14 @@ export async function appendCourierPayRate(params: {
   actorRoles: string[] | null;
   now: Timestamp;
   scope: StaffScope;
+  /** Stage 6A — set "Fatura Keser" with the first rate (staff form). */
+  issuesInvoice?: boolean;
 }): Promise<{ write: () => CourierPayRateVersion }> {
   const { tx, db, organizationId, staffUid, input, now } = params;
   const ref = courierPayProfileRef(db, organizationId, staffUid);
   const snap = await tx.get(ref);
-  const versions: CourierPayRateVersion[] = snap.exists ? ((snap.data() as CourierPayProfileDoc).versions ?? []) : [];
+  const existing = snap.exists ? (snap.data() as CourierPayProfileDoc) : null;
+  const versions: CourierPayRateVersion[] = existing?.versions ?? [];
   const current = rateInForce(versions, istanbulDate(now.toMillis()));
   assertMaySetKind(params.scope, input.courierKind, current);
   return {
@@ -319,12 +427,15 @@ export async function appendCourierPayRate(params: {
         createdAt: now,
         createdByUid: params.actorUid,
       };
+      // Stage 6A — keep the invoicing flag and the running totals.
       const doc: CourierPayProfileDoc = {
+        ...(existing ?? {}),
         organizationId,
         staffUid,
         branchIds: params.branchIds,
         versions: [...versions, version],
         updatedAt: now,
+        issuesInvoice: params.issuesInvoice ?? existing?.issuesInvoice ?? false,
       };
       tx.set(ref, doc);
       writeAuditEvent({
@@ -362,7 +473,7 @@ export function resolveEffectiveFromDate(raw: unknown, nowMillis: number): strin
   return raw;
 }
 
-async function loadCourierMembership(organizationId: string, staffUid: string): Promise<MembershipDoc> {
+export async function loadCourierMembership(organizationId: string, staffUid: string): Promise<MembershipDoc> {
   const snap = await getFirestore().collection("memberships").doc(membershipId(organizationId, staffUid)).get();
   if (!snap.exists) throw new HttpsError("not-found", "No staff member found for this account in this organization.");
   const doc = snap.data() as MembershipDoc;
@@ -419,6 +530,7 @@ export const getCourierPayProfile = onCall({ enforceAppCheck: shouldEnforceAppCh
     targetUid,
     current: current ? serializeVersion(current) : null,
     versions: versions.map(serializeVersion),
+    issuesInvoice: snap.exists ? (snap.data() as CourierPayProfileDoc).issuesInvoice === true : false,
   };
 });
 
@@ -467,6 +579,9 @@ export function writePackageEarnings(params: {
     };
     params.tx.set(params.db.collection(COURIER_EARNINGS_COLLECTION).doc(`pkg-${order.orderId}`), line);
   }
+  params.tx.set(courierPayProfileRef(params.db, params.organizationId, profile.staffUid), {
+    earnedTotalMinorUnits: FieldValue.increment(rate.perPackageMinorUnits * params.orders.length),
+  }, { merge: true });
   return params.orders.length;
 }
 
@@ -741,6 +856,9 @@ export const reviewCourierShift = onCall({ enforceAppCheck: shouldEnforceAppChec
         createdAt: now,
       };
       tx.set(db.collection(COURIER_EARNINGS_COLLECTION).doc(lineId), line);
+      tx.set(courierPayProfileRef(db, organizationId, shift.staffUid), {
+        earnedTotalMinorUnits: FieldValue.increment(line.amountMinorUnits),
+      }, { merge: true });
       const update = {
         status: "closed" as const, approvedEndAt, endReviewedByUid: actorUid,
         endAdjustReason: adjusted ? reason : null, approvedMinutes: minutes, earningLineId: lineId,
@@ -762,7 +880,7 @@ export const reviewCourierShift = onCall({ enforceAppCheck: shouldEnforceAppChec
 // Earnings views
 // ---------------------------------------------------------------------------
 
-function requirePeriod(data: Record<string, unknown>): { fromDate: string; toDate: string } {
+export function requirePeriod(data: Record<string, unknown>): { fromDate: string; toDate: string } {
   const fromDate = data.fromDate;
   const toDate = data.toDate;
   if (!isValidDate(fromDate) || !isValidDate(toDate)) invalid("fromDate and toDate must be YYYY-MM-DD.");
@@ -817,7 +935,8 @@ export const getCourierEarnings = onCall({ enforceAppCheck: shouldEnforceAppChec
   const organizationId = requireString(data.organizationId, "organizationId");
   const { fromDate, toDate } = requirePeriod(data);
   const scope = await resolveStaffScope(request, organizationId);
-  const snap = await getFirestore()
+  const db = getFirestore();
+  const snap = await db
     .collection(COURIER_EARNINGS_COLLECTION)
     .where("organizationId", "==", organizationId)
     .where("earnedDate", ">=", fromDate)
@@ -828,18 +947,50 @@ export const getCourierEarnings = onCall({ enforceAppCheck: shouldEnforceAppChec
     .map((doc) => ({ id: doc.id, line: doc.data() as CourierEarningDoc }))
     .filter(({ line }) => inScope(scope, line.branchId))
     .map(({ id, line }) => serializeLine(id, line));
-  const couriers = groupByCourier(lines);
+  // Stage 6A — payments in the period (by payment date), in the caller's branches.
+  const paymentSnap = await db.collection(COURIER_PAYMENTS_COLLECTION).where("organizationId", "==", organizationId).get();
+  const payments = paymentSnap.docs
+    .map((doc) => ({ id: doc.id, payment: doc.data() as CourierPaymentDoc }))
+    .filter(({ payment }) => payment.paidDate >= fromDate && payment.paidDate <= toDate)
+    .filter(({ payment }) => scope.kind === "organization" || payment.branchIds.some((b) => scope.branches.has(b)));
+  const grouped = groupByCourier(lines);
+  const names = new Map<string, string>();
+  for (const c of grouped) names.set(c.staffUid, c.courierName);
+  for (const { payment } of payments) if (!names.has(payment.staffUid)) names.set(payment.staffUid, payment.courierName);
+  const profileRefs = [...names.keys()].map((uid) => courierPayProfileRef(db, organizationId, uid));
+  const profiles = profileRefs.length > 0 ? await db.getAll(...profileRefs) : [];
+  const profileByUid = new Map(
+    profiles.map((p) => [p.id.slice(organizationId.length + 1), p.exists ? (p.data() as CourierPayProfileDoc) : null]),
+  );
+  const empty = summarizeEarnings([]);
+  const couriers = [...names.entries()]
+    .map(([staffUid, courierName]) => {
+      const entry = grouped.find((c) => c.staffUid === staffUid) ?? { staffUid, courierName, ...empty, lines: [] };
+      const own = payments.filter(({ payment }) => payment.staffUid === staffUid);
+      const profile = profileByUid.get(staffUid) ?? null;
+      return {
+        ...entry,
+        issuesInvoice: profile?.issuesInvoice === true,
+        paidInPeriodMinorUnits: own.reduce((sum, { payment }) => sum + payment.amountMinorUnits, 0),
+        payments: own.map(({ id, payment }) => serializePayment(id, payment)).sort((a, b) => b.createdAtMillis - a.createdAtMillis),
+        ...balanceOf(profile),
+      };
+    })
+    .sort((a, b) => a.courierName.localeCompare(b.courierName, "tr"));
   return {
     organizationId,
     fromDate,
     toDate,
     totalMinorUnits: couriers.reduce((sum, c) => sum + c.totalMinorUnits, 0),
+    paidInPeriodMinorUnits: couriers.reduce((sum, c) => sum + c.paidInPeriodMinorUnits, 0),
+    /** Stage 6A — money out is admin/owner only. */
+    canRecordPayments: scope.kind === "organization",
     truncated: snap.size >= MAX_EARNING_LINES,
     couriers,
   };
 });
 
-/** The courier app's "Kazancım": own earnings for a period, the rate in force and the open shift. */
+/** The courier app's "Kazancım": own earnings for a period, the rate in force, the open shift, payments and invoices. */
 export const getMyCourierPay = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
   const data = (request.data ?? {}) as Record<string, unknown>;
   const { fromDate, toDate } = requirePeriod(data);
@@ -856,8 +1007,8 @@ export const getMyCourierPay = onCall({ enforceAppCheck: shouldEnforceAppCheck()
     return { uid, organizationId, courier: courier as DocumentData, profileSnap, shiftSnap };
   });
   const { uid, organizationId, profileSnap, shiftSnap } = context;
-  const versions = profileSnap.exists ? ((profileSnap.data() as CourierPayProfileDoc).versions ?? []) : [];
-  const current = rateInForce(versions, istanbulDate(Date.now()));
+  const profile = profileSnap.exists ? (profileSnap.data() as CourierPayProfileDoc) : null;
+  const current = rateInForce(profile?.versions ?? [], istanbulDate(Date.now()));
   const snap = await db
     .collection(COURIER_EARNINGS_COLLECTION)
     .where("staffUid", "==", uid)
@@ -870,14 +1021,31 @@ export const getMyCourierPay = onCall({ enforceAppCheck: shouldEnforceAppCheck()
     .filter(({ line }) => line.organizationId === organizationId)
     .map(({ id, line }) => serializeLine(id, line))
     .sort((a, b) => b.earnedAtMillis - a.earnedAtMillis);
+  const paymentSnap = await db.collection(COURIER_PAYMENTS_COLLECTION).where("staffUid", "==", uid).get();
+  const payments = paymentSnap.docs
+    .map((doc) => ({ id: doc.id, payment: doc.data() as CourierPaymentDoc }))
+    .filter(({ payment }) => payment.organizationId === organizationId);
+  const inPeriod = payments.filter(({ payment }) => payment.paidDate >= fromDate && payment.paidDate <= toDate);
+  const invoiceSnap = await db.collection(COURIER_INVOICES_COLLECTION).where("staffUid", "==", uid).get();
+  const invoices = invoiceSnap.docs
+    .map((doc) => ({ id: doc.id, invoice: doc.data() as CourierInvoiceDoc }))
+    .filter(({ invoice }) => invoice.organizationId === organizationId)
+    .map(({ id, invoice }) => serializeInvoice(id, invoice))
+    .sort((a, b) => b.createdAtMillis - a.createdAtMillis)
+    .slice(0, 50);
   return {
     organizationId,
     fromDate,
     toDate,
     shiftsEnabled: context.courier.type !== "pool",
+    issuesInvoice: profile?.issuesInvoice === true,
     currentRate: current ? serializeVersion(current) : null,
     openShift: shiftSnap?.exists ? serializeShift(shiftSnap.id, shiftSnap.data() as CourierShiftDoc) : null,
     ...summarizeEarnings(lines),
     lines,
+    paidInPeriodMinorUnits: inPeriod.reduce((sum, { payment }) => sum + payment.amountMinorUnits, 0),
+    payments: inPeriod.map(({ id, payment }) => serializePayment(id, payment)).sort((a, b) => b.createdAtMillis - a.createdAtMillis),
+    ...balanceOf(profile),
+    invoices,
   };
 });

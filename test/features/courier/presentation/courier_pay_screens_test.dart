@@ -206,7 +206,8 @@ void main() {
 
       expect(gateway.calls, contains('earnings:2026-11-15..2026-11-15'));
       expect(find.text('Toplam: 525 TL'), findsOneWidget);
-      expect(find.text('3 paket · 2 sa 42 dk vardiya'), findsOneWidget);
+      expect(
+          find.textContaining('3 paket · 2 sa 42 dk vardiya'), findsOneWidget);
 
       await tester.tap(find.byKey(const Key('courierEarnings-courier-1')));
       await tester.pumpAndSettle();

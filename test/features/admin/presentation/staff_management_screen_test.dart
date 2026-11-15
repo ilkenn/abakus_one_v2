@@ -398,6 +398,39 @@ void main() {
     expect(payGateway.calls.last, 'setRate:uid-courier');
     expect(payGateway.lastInput?.perPackageMinorUnits, 4500);
     expect(gateway.calls, isEmpty, reason: 'the roles did not change');
-    expect(find.text('Ücret güncellendi.'), findsOneWidget);
+    expect(find.text('Ücret bilgileri güncellendi.'), findsOneWidget);
+  });
+
+  testWidgets(
+      'ADR-085 stage 6A: "Fatura Keser" is asked with the pay and saved on '
+      'its own when only it changes', (tester) async {
+    await pumpScreen(tester);
+    await openCreateAsCourier(tester);
+    await tester.enterText(
+        find.byKey(const Key('courierPerPackageField')), '40');
+    await tester.enterText(find.byKey(const Key('courierHourlyField')), '150');
+    await tester.ensureVisible(find.byKey(const Key('courierIssuesInvoice')));
+    await tester.tap(find.byKey(const Key('courierIssuesInvoice')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('staffCreateSaveButton')));
+    await tester.tap(find.byKey(const Key('staffCreateSaveButton')));
+    await tester.pumpAndSettle();
+    expect(gateway.lastCourierPay?.issuesInvoice, isTrue);
+    expect(gateway.lastCourierPay?.toJson()['issuesInvoice'], isTrue);
+
+    payGateway.rate = shopRate;
+    await tester.tap(find.byKey(const Key('staffActions-uid-+905321234568')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rol ve Ücreti Düzenle'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('courierIssuesInvoice')));
+    await tester.tap(find.byKey(const Key('courierIssuesInvoice')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('staffRolesSaveButton')));
+    await tester.pumpAndSettle();
+    expect(payGateway.calls.last, 'setInvoicing:uid-+905321234568:true');
+    expect(payGateway.calls.where((c) => c.startsWith('setRate')), isEmpty,
+        reason: 'the rate did not change');
+    expect(find.text('Ücret bilgileri güncellendi.'), findsOneWidget);
   });
 }

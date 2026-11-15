@@ -12154,6 +12154,42 @@ Stage 5 follow-ups (2026-11-15, product owner request):
   `mark_courier_earnings_paid`, `calculate_delivery_earnings`, `calculate_shift_hourly_earnings`,
   `schedule_courier_shift`), `shift_earnings_window_calculator.dart`, their six test files, and the
   "Ücretlendirme" button on the dispatch board.
+
+### Stage 6A — courier invoices, payments and date-range reports (2026-11-15) — Visual Review Bekleniyor
+
+Product owner approved the data model, the Storage/Firestore rules and the 6A → 6B → 6C order.
+
+- **Date range.** "Kazancım" and the panel's "Kazançlar" add "Tarih Aralığı Seç" to Bugün / Bu Hafta / Bu
+  Ay, up to 366 days (the server limit was raised from 93). Both show the period's packages, shift time,
+  earnings and what was paid in it, plus the all-time balance ("Kalan Bakiye" = everything earned −
+  everything paid).
+  - Earned and paid totals are kept on the pay profile (`earnedTotalMinorUnits`,
+    `paidTotalMinorUnits`); earning lines written before 6A (dev test data) are not in the earned total.
+- **"Fatura Keser".** A switch in the staff add/edit form (`courierPayProfiles.issuesInvoice`,
+  `setCourierInvoicing`). Couriers who do not invoice are only paid or advanced by an admin/owner.
+- **"Fatura Yükle"** (courier app, invoicing couriers):
+  - pick the period, see the computed earnings, type the amount, the number and a note, attach a PDF or
+    a photo, send;
+  - upload: a one-use 15-minute grant (`requestCourierUploadGrant`), then
+    `tenants/{org}/courierDocuments/{uid}/{grantId}` (Storage rule: owner, first write, ≤ 5 MB, the
+    granted PDF/JPEG/PNG type; no client read or delete); `submitCourierInvoice` checks the file exists;
+  - locking is by lines: an invoice takes every not-yet-invoiced line up to its end date (earlier ones
+    are carried in); a period overlapping a non-rejected invoice is refused; a rejection frees the lines.
+- **Review and payment** (panel, "Faturalar" tab):
+  - a manager of the courier's branches or an admin/owner opens the file, approves or rejects with a
+    reason; the difference between the invoice and the computed earnings is shown;
+  - money out is admin/owner only: "Tam Ödendi", "Kısmi Ödeme Gir", "Avans / Ödeme Gir" and "Geri Al"
+    (a reversal entry; nothing is edited or deleted).
+  - The invoice status follows: Onay Bekliyor → Onaylandı → Kısmi Ödendi → Ödendi, or Reddedildi.
+- **Files on Windows.** The panel gets a file through `getCourierInvoiceFile` (base64, branch-checked).
+  Images open in the app; a PDF is opened with the system viewer from a temp file. On Android, opening a
+  PDF from the panel may not work (the courier uploads from the phone; review is meant for the panel).
+- New dependency: `file_selector` ^1.1.0 (official flutter.dev) to pick the invoice PDF.
+- Tests:
+  - server: `courierInvoicesPure.test.ts` (4), `courierInvoices.test.ts` (3 emulator: sending, overlap,
+    reuse, carried lines; review and branch scope; payments, reversal, advance, balance, 366 days);
+  - Storage rules: 2 new tests in `storage-tests/rules.test.js` (37/37);
+  - app: `courier_invoices_test.dart` (7) and the "Fatura Keser" staff form test.
 - Tests: `courierPayPure.test.ts` (6), `courierPay.test.ts` (4 emulator: form rate and pool rule,
   versions/back-dating/branch scope, the whole shift flow with earnings visibility, pool couriers),
   `courierSettlement.test.ts` (package lines at the rate in force; none without a profile),

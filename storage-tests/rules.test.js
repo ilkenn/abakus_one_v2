@@ -569,3 +569,56 @@ test('an unlisted path defaults to fully denied (fail closed)', async () => {
     ),
   );
 });
+
+// ---------------------------------------------------------------------------
+// ADR-085 stage 6A — courier documents (invoices): one-use server grant.
+// ---------------------------------------------------------------------------
+
+async function seedCourierGrant({
+  organizationId = 'org-1',
+  uid = 'courier-1',
+  grantId = nextGrantId(),
+  status = 'issued',
+  expiresInMs = 15 * 60 * 1000,
+  contentType = 'application/pdf',
+} = {}) {
+  const objectPath = `tenants/${organizationId}/courierDocuments/${uid}/${grantId}`;
+  await seedFirestore(async (db) => {
+    await setDoc(doc(db, `courierUploadGrants/${grantId}`), {
+      staffUid: uid, organizationId, objectPath, contentType, purpose: 'invoice', orderId: null, status,
+      createdAt: Timestamp.now(), expiresAt: Timestamp.fromMillis(Date.now() + expiresInMs),
+    });
+  });
+  return { grantId, objectPath };
+}
+
+test('courier invoice: the courier uploads its PDF under a valid grant, once; nobody reads it from a client', async () => {
+  const { objectPath } = await seedCourierGrant();
+  const courier = testEnv.authenticatedContext('courier-1').storage();
+  await assertSucceeds(uploadBytes(ref(courier, objectPath), smallImage, { contentType: 'application/pdf' }));
+  await assertFails(uploadBytes(ref(courier, objectPath), smallImage, { contentType: 'application/pdf' }));
+  await assertFails(getBytes(ref(courier, objectPath)));
+  const staff = testEnv.authenticatedContext('manager-1', { organizationAccess: ['org-1'] }).storage();
+  await assertFails(getBytes(ref(staff, objectPath)));
+});
+
+test('courier invoice: refused for another uid, another type, an oversized file, a used or expired grant, or no grant', async () => {
+  const other = await seedCourierGrant();
+  const eve = testEnv.authenticatedContext('eve').storage();
+  await assertFails(uploadBytes(ref(eve, other.objectPath), smallImage, { contentType: 'application/pdf' }));
+
+  const typed = await seedCourierGrant({ contentType: 'application/pdf' });
+  const courier = testEnv.authenticatedContext('courier-1').storage();
+  await assertFails(uploadBytes(ref(courier, typed.objectPath), smallImage, { contentType: 'image/png' }));
+
+  const big = await seedCourierGrant();
+  await assertFails(uploadBytes(ref(courier, big.objectPath), oversizedImage, { contentType: 'application/pdf' }));
+
+  const used = await seedCourierGrant({ status: 'used' });
+  await assertFails(uploadBytes(ref(courier, used.objectPath), smallImage, { contentType: 'application/pdf' }));
+
+  const expired = await seedCourierGrant({ expiresInMs: -1000 });
+  await assertFails(uploadBytes(ref(courier, expired.objectPath), smallImage, { contentType: 'application/pdf' }));
+
+  await assertFails(uploadBytes(ref(courier, 'tenants/org-1/courierDocuments/courier-1/no-grant'), smallImage, { contentType: 'application/pdf' }));
+});
