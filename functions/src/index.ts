@@ -135,6 +135,17 @@ export {
   recordCourierPayment,
   getCourierInvoiceFile,
 } from "./courierInvoices";
+// ADR-085 stage 6B — "Teslim Ettim" with payment rules and the slip photo,
+// payment-method change review, and the courier's cancellation request.
+export {
+  courierReportDelivered,
+  listCourierPaymentChanges,
+  reviewCourierPaymentChange,
+  getCourierPaymentSlip,
+  courierRequestCancellation,
+  onCourierCancellationRequestWrittenNotify,
+  onCourierPaymentChangeWrittenNotify,
+} from "./courierDeliveryControls";
 // 2026-11-12 (Faz 3a) — external-courier delivery pool: "Havuza Gönder" /
 // "Havuzdan Geri Al", the courier's "Talep Oluştur", staff approve/reject,
 // the courier's "Yola Çıktım" / "Teslim Ettim", and the trigger keeping the
@@ -145,7 +156,6 @@ export {
   requestPoolOrder,
   respondToCourierPoolRequest,
   courierMarkDeparted,
-  courierReportDelivered,
   onDeliveryOrderCourierProjection,
 } from "./courierPool";
 // 2026-11-12 (Faz 3b) — the branch's pool region settings (default district).

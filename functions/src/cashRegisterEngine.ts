@@ -759,8 +759,8 @@ export const closeCashSession = onCall({ enforceAppCheck: shouldEnforceAppCheck(
  * discipline elsewhere in this codebase). */
 const DAILY_REVENUE_ATTEMPT_LIMIT = 5000;
 
-/** The four meal-card brands the POS offers — always reported, even at 0. */
-export const Z_REPORT_MEAL_CARD_BRANDS = ["pluxee", "multinet", "setcard", "edenred"] as const;
+/** The meal-card brands collected at the POS or the door — always reported, even at 0 (MetropolCard: ADR-085 stage 6B). */
+export const Z_REPORT_MEAL_CARD_BRANDS = ["pluxee", "multinet", "setcard", "edenred", "metropol_card"] as const;
 
 export interface TenderTotals {
   cashMinorUnits: number;

@@ -26,7 +26,15 @@ const courierDeliveryPaymentMethods = [
   (id: 'multinet', label: 'Multinet'),
   (id: 'setcard', label: 'Setcard'),
   (id: 'edenred', label: 'Edenred'),
+  // ADR-085 stage 6B.
+  (id: 'metropol_card', label: 'MetropolCard'),
 ];
+
+/// ADR-085 stage 6B — a pay-on-delivery order (any other planned method was
+/// paid online and can never be switched).
+bool courierIsPayOnDelivery(String? paymentMethodId) =>
+    paymentMethodId == null ||
+    courierDeliveryPaymentMethods.any((m) => m.id == paymentMethodId);
 
 /// ADR-085 stage 5 follow-up — the order is paid at the door on a card
 /// terminal (bank card or meal card), so the courier must take the POS
@@ -112,6 +120,7 @@ class CourierWorkOrder {
     this.source = CourierOrderSource.own,
     this.marketplaceOrderCode,
     this.switchboardPhone,
+    this.cancellationRequestStatus,
   });
 
   final String orderId;
@@ -144,6 +153,10 @@ class CourierWorkOrder {
   /// Trendyol/Getir: the restaurant line to call (organization setting).
   final String? switchboardPhone;
 
+  /// ADR-085 stage 6B — the courier's own cancellation request: `pending`,
+  /// `rejected`, or `null` when none.
+  final String? cancellationRequestStatus;
+
   /// Open work first: on the road, assigned, reserved, then delivered.
   int get statusRank => switch (status) {
         CourierWorkOrderStatus.departed => 0,
@@ -174,6 +187,7 @@ class CourierWorkOrder {
             CourierOrderSource.parse(data['marketplaceProvider'] as String?),
         marketplaceOrderCode: data['marketplaceOrderCode'] as String?,
         switchboardPhone: data['switchboardPhone'] as String?,
+        cancellationRequestStatus: data['cancellationRequestStatus'] as String?,
       );
 }
 

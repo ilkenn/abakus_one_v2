@@ -67,7 +67,7 @@ test("Z report: meal cards are split per brand, never folded into Diğer", () =>
   assert.strictEqual(totals.cardMinorUnits, 20000);
   assert.deepStrictEqual(
     totals.mealCardBreakdown.map((row) => [row.displayName, row.amountMinorUnits]),
-    [["Pluxee", 4000], ["Multinet", 5000], ["Setcard", 0], ["Edenred", 0]],
+    [["Pluxee", 4000], ["Multinet", 5000], ["Setcard", 0], ["Edenred", 0], ["MetropolCard", 0]],
   );
   assert.strictEqual(totals.mealCardMinorUnits, 9000);
   assert.strictEqual(totals.otherMinorUnits, 500);

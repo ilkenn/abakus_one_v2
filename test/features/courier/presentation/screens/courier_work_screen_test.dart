@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:abakus_one_v2/features/courier/data/courier_work_repository.dart';
 import 'package:abakus_one_v2/features/courier/domain/work/courier_work_models.dart';
@@ -67,8 +68,24 @@ class _FakeGateway implements CourierWorkGateway {
   Future<void> markDeparted(String orderId) => _record('departed:$orderId');
 
   @override
-  Future<void> reportDelivered(String orderId, String paymentMethodId) =>
-      _record('delivered:$orderId:$paymentMethodId');
+  Future<void> reportDelivered(
+    String orderId,
+    String? paymentMethodId, {
+    Uint8List? slipPhoto,
+  }) {
+    lastSlip = slipPhoto;
+    return _record('delivered:$orderId:$paymentMethodId');
+  }
+
+  Uint8List? lastSlip;
+
+  @override
+  Future<void> requestCancellation(String orderId, String reason) {
+    lastCancelReason = reason;
+    return _record('cancel:$orderId');
+  }
+
+  String? lastCancelReason;
 
   @override
   Future<void> requestPoolOrder(String orderId) => _record('request:$orderId');
@@ -104,6 +121,77 @@ CourierWorkOrder _order(CourierWorkOrderStatus status,
       status: status,
     );
 
+/// A 1×1 transparent PNG — a decodable "slip photo" for the camera fake.
+final _slipPng = Uint8List.fromList(const [
+  0x89,
+  0x50,
+  0x4E,
+  0x47,
+  0x0D,
+  0x0A,
+  0x1A,
+  0x0A,
+  0x00,
+  0x00,
+  0x00,
+  0x0D,
+  0x49,
+  0x48,
+  0x44,
+  0x52,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x00,
+  0x01,
+  0x08,
+  0x06,
+  0x00,
+  0x00,
+  0x00,
+  0x1F,
+  0x15,
+  0xC4,
+  0x89,
+  0x00,
+  0x00,
+  0x00,
+  0x0D,
+  0x49,
+  0x44,
+  0x41,
+  0x54,
+  0x78,
+  0x9C,
+  0x63,
+  0x00,
+  0x01,
+  0x00,
+  0x00,
+  0x05,
+  0x00,
+  0x01,
+  0x0D,
+  0x0A,
+  0x2D,
+  0xB4,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0x49,
+  0x45,
+  0x4E,
+  0x44,
+  0xAE,
+  0x42,
+  0x60,
+  0x82,
+]);
+
 class _Fakes {
   _Fakes(this.repository, this.gateway, this.dialed);
   final _FakeRepository repository;
@@ -124,6 +212,8 @@ Future<_Fakes> _pump(WidgetTester tester, _FakeRepository repository) async {
       courierUriLauncherProvider.overrideWithValue((uri) async {
         dialed.add(uri.toString());
       }),
+      // ADR-085 stage 6B — the camera returns a tiny real PNG.
+      courierSlipCameraProvider.overrideWithValue(() async => _slipPng),
     ],
     child: const MaterialApp(home: CourierWorkScreen(uid: 'uid-1')),
   ));
@@ -179,9 +269,22 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('deliveryMethod-multinet')));
     await tester.pumpAndSettle();
+    // ADR-085 stage 6B — cash → Multinet: flagged, and a slip photo first.
+    expect(find.byKey(const Key('deliveryMethodChanged')), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('confirmDelivered')))
+          .onPressed,
+      isNull,
+      reason: 'no "Teslim Ettim" without the slip photo',
+    );
+    await tester.tap(find.byKey(const Key('slipCapture')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('slipPreview')), findsOneWidget);
     await tester.tap(find.byKey(const Key('confirmDelivered')));
     await tester.pumpAndSettle();
     expect(fakes.gateway.calls, ['departed:o1', 'delivered:o1:multinet']);
+    expect(fakes.gateway.lastSlip, _slipPng);
 
     // A stale copy that still carries personal data — the card must not
     // show any of it once delivered (ADR-085 stage 2, KVKK).
@@ -357,5 +460,62 @@ void main() {
     });
     expect(account.isExternal, isTrue);
     expect(formatCourierAmount(45050), '450,50 TL');
+  });
+
+  testWidgets(
+      'ADR-085 stage 6B: cash needs no photo; an order paid online asks no '
+      'method; a cancellation is only a request with a reason', (tester) async {
+    final repository = _FakeRepository()
+      ..account = _account()
+      ..latestOrders = [_order(CourierWorkOrderStatus.departed)];
+    final fakes = await _pump(tester, repository);
+
+    await tester.tap(find.byKey(const Key('delivered-o1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('slipCapture')), findsNothing);
+    expect(
+        find.byKey(const Key('deliveryMethod-metropol_card')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('confirmDelivered')));
+    await tester.pumpAndSettle();
+    expect(fakes.gateway.calls, ['delivered:o1:cash']);
+    expect(fakes.gateway.lastSlip, isNull);
+
+    repository.emitOrders([
+      _order(CourierWorkOrderStatus.departed, plannedMethod: 'online_card'),
+    ]);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('delivered-o1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('deliveryPaidOnline')), findsOneWidget);
+    expect(find.byKey(const Key('deliveryMethod-cash')), findsNothing);
+    await tester.tap(find.byKey(const Key('confirmDelivered')));
+    await tester.pumpAndSettle();
+    expect(fakes.gateway.calls.last, 'delivered:o1:null');
+
+    await tester.tap(find.byKey(const Key('requestCancel-o1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('cancelReason')), 'yok');
+    await tester.tap(find.byKey(const Key('cancelReasonSend')));
+    await tester.pumpAndSettle();
+    expect(find.text('En az 5 karakterlik bir gerekçe yazın'), findsOneWidget);
+    await tester.enterText(
+        find.byKey(const Key('cancelReason')), 'Müşteri adreste yok');
+    await tester.tap(find.byKey(const Key('cancelReasonSend')));
+    await tester.pumpAndSettle();
+    expect(fakes.gateway.calls.last, 'cancel:o1');
+    expect(fakes.gateway.lastCancelReason, 'Müşteri adreste yok');
+    expect(find.textContaining('iptal talebiniz müdür onayına gönderildi'),
+        findsOneWidget);
+
+    repository.emitOrders([
+      CourierWorkOrder.fromFirestore('o1', const {
+        'orderNumber': 'DL-0001',
+        'status': 'departed',
+        'cancellationRequestStatus': 'pending',
+      }),
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('cancelPending-o1')), findsOneWidget);
+    expect(find.byKey(const Key('requestCancel-o1')), findsNothing);
   });
 }

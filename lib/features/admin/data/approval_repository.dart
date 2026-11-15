@@ -77,6 +77,7 @@ class FirestoreApprovalRepository implements ApprovalRepository {
       createdAt: (data['createdAt'] as fs.Timestamp).toDate(),
       expiresAt: (data['expiresAt'] as fs.Timestamp).toDate(),
       version: data['version'] as int,
+      summary: data['summary'] as String?,
     );
   }
 }

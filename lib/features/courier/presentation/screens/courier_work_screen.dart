@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart' show Uint8List;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../shared/widgets/cards/app_card.dart';
@@ -140,7 +142,29 @@ void _snack(BuildContext context, String message) =>
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
 
-String _errorText(CourierWorkException error) => switch (error.code) {
+String _errorText(CourierWorkException error) => switch (error.detailCode) {
+      'courierDelivery/slip-required' =>
+        'Kart veya yemek kartı tahsilatında slip fotoğrafı zorunlu.',
+      'courierDelivery/slip-expired' ||
+      'courierDelivery/slip-used' ||
+      'courierDelivery/slip-invalid' =>
+        'Slip fotoğrafı geçersiz ya da eski; yeniden çekin.',
+      'courierDelivery/slip-missing' =>
+        'Slip fotoğrafı yüklenemedi. Bağlantınızı kontrol edip tekrar deneyin.',
+      'courierDelivery/online-payment-locked' =>
+        'Online ödenmiş siparişin ödeme yöntemi değiştirilemez.',
+      'courierDelivery/invalid-method' =>
+        'Yalnızca kapıda ödeme yöntemleri seçilebilir.',
+      'courierCancellation/already-pending' =>
+        'Bu sipariş için iptal talebiniz zaten müdür onayında.',
+      'courierCancellation/already-delivered' =>
+        'Teslim edilmiş sipariş için iptal talebi gönderilemez.',
+      'courierCancellation/invalid-reason' =>
+        'Gerekçe en az 5 karakter olmalı.',
+      _ => _errorTextByCode(error),
+    };
+
+String _errorTextByCode(CourierWorkException error) => switch (error.code) {
       'permission-denied' ||
       'permission_denied' =>
         'Bu işlem için yetkiniz yok (sipariş size atanmamış olabilir).',
@@ -197,17 +221,39 @@ class _MyOrdersTabState extends ConsumerState<_MyOrdersTab> {
   }
 
   Future<void> _reportDelivered(CourierWorkOrder order) async {
-    final method = await showModalBottomSheet<String>(
+    final result = await showModalBottomSheet<_DeliveryReport>(
       context: context,
+      isScrollControlled: true,
       builder: (_) => _PaymentMethodSheet(order: order),
     );
-    if (method == null || !mounted) return;
+    if (result == null || !mounted) return;
+    final method = result.method;
     await _run(
       order.orderId,
       () => ref
           .read(courierWorkGatewayProvider)
-          .reportDelivered(order.orderId, method),
-      '${order.orderNumber} teslim edildi (${courierPaymentMethodLabel(method)}).',
+          .reportDelivered(order.orderId, method, slipPhoto: result.slip),
+      method == null
+          ? '${order.orderNumber} teslim edildi (online ödendi).'
+          : '${order.orderNumber} teslim edildi '
+              '(${courierPaymentMethodLabel(method)}).',
+    );
+  }
+
+  /// ADR-085 stage 6B — "İptal Talebi Gönder": a reason, then the Onay
+  /// Kutusu decides (a courier never cancels itself).
+  Future<void> _requestCancellation(CourierWorkOrder order) async {
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (_) => _CancellationReasonDialog(order: order),
+    );
+    if (reason == null || !mounted) return;
+    await _run(
+      order.orderId,
+      () => ref
+          .read(courierWorkGatewayProvider)
+          .requestCancellation(order.orderId, reason),
+      '${order.orderNumber}: iptal talebiniz müdür onayına gönderildi.',
     );
   }
 
@@ -233,6 +279,7 @@ class _MyOrdersTabState extends ConsumerState<_MyOrdersTab> {
             busy: _busyOrderId == orders[i].orderId,
             onDeparted: () => _departed(orders[i]),
             onDelivered: () => _reportDelivered(orders[i]),
+            onRequestCancellation: () => _requestCancellation(orders[i]),
             onOpen: (uri) => ref.read(courierUriLauncherProvider)(uri),
           ),
         );
@@ -305,6 +352,7 @@ class _OrderCard extends StatelessWidget {
     required this.busy,
     required this.onDeparted,
     required this.onDelivered,
+    required this.onRequestCancellation,
     required this.onOpen,
   });
 
@@ -312,6 +360,7 @@ class _OrderCard extends StatelessWidget {
   final bool busy;
   final VoidCallback onDeparted;
   final VoidCallback onDelivered;
+  final VoidCallback onRequestCancellation;
   final Future<void> Function(Uri uri) onOpen;
 
   /// ADR-085 stage 4 — "Konuma Git": pick Google, Apple or Yandex.
@@ -447,8 +496,38 @@ class _OrderCard extends StatelessWidget {
                     label: const Text('Teslim Ettim'),
                     onPressed: busy ? null : onDelivered,
                   ),
+                if ((order.status == CourierWorkOrderStatus.assigned ||
+                        order.status == CourierWorkOrderStatus.departed) &&
+                    order.cancellationRequestStatus != 'pending')
+                  TextButton.icon(
+                    key: Key('requestCancel-${order.orderId}'),
+                    icon: const Icon(Icons.cancel_outlined),
+                    label: const Text('İptal Talebi Gönder'),
+                    onPressed: busy ? null : onRequestCancellation,
+                  ),
               ],
             ),
+            if (order.cancellationRequestStatus == 'pending')
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.xs),
+                child: Text(
+                  'İptal talebiniz müdür onayında — paketi şimdilik '
+                  'yanınızda tutun.',
+                  key: Key('cancelPending-${order.orderId}'),
+                  style: AppTypography.bodySmall
+                      .copyWith(color: AppColors.warning),
+                ),
+              ),
+            if (order.cancellationRequestStatus == 'rejected')
+              Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.xs),
+                child: Text(
+                  'İptal talebiniz reddedildi — teslimata devam edin.',
+                  key: Key('cancelRejected-${order.orderId}'),
+                  style:
+                      AppTypography.bodySmall.copyWith(color: AppColors.error),
+                ),
+              ),
           ],
         ),
       ),
@@ -456,59 +535,218 @@ class _OrderCard extends StatelessWidget {
   }
 }
 
-class _PaymentMethodSheet extends StatefulWidget {
+/// What "Teslim Ettim" sends: the method (`null` = paid online) and, for a
+/// card or meal card, the slip photo.
+typedef _DeliveryReport = ({String? method, Uint8List? slip});
+
+/// "Müşteri nasıl ödedi?" — ADR-085 stage 6B: only pay-on-delivery methods
+/// (an order paid online asks nothing), and a card or meal card needs a
+/// camera photo of the slip before "Teslim Ettim" is enabled.
+class _PaymentMethodSheet extends ConsumerStatefulWidget {
   const _PaymentMethodSheet({required this.order});
 
   final CourierWorkOrder order;
 
   @override
-  State<_PaymentMethodSheet> createState() => _PaymentMethodSheetState();
+  ConsumerState<_PaymentMethodSheet> createState() =>
+      _PaymentMethodSheetState();
 }
 
-class _PaymentMethodSheetState extends State<_PaymentMethodSheet> {
+class _PaymentMethodSheetState extends ConsumerState<_PaymentMethodSheet> {
+  late final bool _paidOnline =
+      !courierIsPayOnDelivery(widget.order.plannedPaymentMethodId);
   late String _method = courierDeliveryPaymentMethods
           .any((m) => m.id == widget.order.plannedPaymentMethodId)
       ? widget.order.plannedPaymentMethodId!
       : 'cash';
+  Uint8List? _slip;
+  bool _capturing = false;
+
+  bool get _needsSlip => !_paidOnline && courierNeedsPosDevice(_method);
+
+  bool get _changed =>
+      widget.order.plannedPaymentMethodId != null &&
+      widget.order.plannedPaymentMethodId != _method;
+
+  Future<void> _capture() async {
+    setState(() => _capturing = true);
+    try {
+      final photo = await ref.read(courierSlipCameraProvider)();
+      if (photo != null && mounted) setState(() => _slip = photo);
+    } finally {
+      if (mounted) setState(() => _capturing = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final canConfirm = _paidOnline || !_needsSlip || _slip != null;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.lg),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text('Müşteri nasıl ödedi?',
-                style: AppTypography.titleMedium),
-            Text(
-                '${widget.order.orderNumber} · '
-                '${formatCourierAmount(widget.order.amountDueMinorUnits)}',
-                style: AppTypography.bodySmall),
-            const SizedBox(height: AppSpacing.md),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: AppSpacing.sm,
-              children: [
-                for (final m in courierDeliveryPaymentMethods)
-                  ChoiceChip(
-                    key: Key('deliveryMethod-${m.id}'),
-                    label: Text(m.label),
-                    selected: _method == m.id,
-                    onSelected: (_) => setState(() => _method = m.id),
-                  ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(_paidOnline ? 'Teslimatı onaylayın' : 'Müşteri nasıl ödedi?',
+                  style: AppTypography.titleMedium),
+              Text(
+                  '${widget.order.orderNumber} · '
+                  '${formatCourierAmount(widget.order.amountDueMinorUnits)}',
+                  style: AppTypography.bodySmall),
+              const SizedBox(height: AppSpacing.md),
+              if (_paidOnline)
+                const Text(
+                  'Bu sipariş online ödendi; kapıda tahsilat yok ve ödeme '
+                  'yöntemi değiştirilemez.',
+                  key: Key('deliveryPaidOnline'),
+                  style: AppTypography.bodyMedium,
+                )
+              else
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    for (final m in courierDeliveryPaymentMethods)
+                      ChoiceChip(
+                        key: Key('deliveryMethod-${m.id}'),
+                        label: Text(m.label),
+                        selected: _method == m.id,
+                        onSelected: (_) => setState(() {
+                          _method = m.id;
+                          _slip = null; // the photo belongs to one method
+                        }),
+                      ),
+                  ],
+                ),
+              if (!_paidOnline && _changed) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  'Ödeme yöntemi değişti: '
+                  '${courierPaymentMethodLabel(widget.order.plannedPaymentMethodId)}'
+                  ' → ${courierPaymentMethodLabel(_method)}. Müdüre bildirilecek.',
+                  key: const Key('deliveryMethodChanged'),
+                  style: AppTypography.bodySmall
+                      .copyWith(color: AppColors.warning),
+                ),
               ],
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            FilledButton(
-              key: const Key('confirmDelivered'),
-              onPressed: () => Navigator.of(context).pop(_method),
-              child: const Text('Teslim Ettim'),
-            ),
-          ],
+              if (_needsSlip) ...[
+                const SizedBox(height: AppSpacing.md),
+                Text(
+                  'POS slipinin ya da yemek kartı onay ekranının fotoğrafını '
+                  'çekin (galeriden seçilemez).',
+                  style: AppTypography.bodySmall
+                      .copyWith(color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                OutlinedButton.icon(
+                  key: const Key('slipCapture'),
+                  onPressed: _capturing ? null : _capture,
+                  icon: const Icon(Icons.photo_camera_outlined),
+                  label: Text(_slip == null
+                      ? 'Slip Fotoğrafı Çek'
+                      : 'Fotoğraf çekildi — Yeniden Çek'),
+                ),
+                if (_slip != null) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  ClipRRect(
+                    borderRadius: AppRadius.kSmall,
+                    child: Image.memory(
+                      _slip!,
+                      key: const Key('slipPreview'),
+                      height: 120,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                          const Icon(Icons.image_outlined),
+                    ),
+                  ),
+                ],
+              ],
+              const SizedBox(height: AppSpacing.lg),
+              FilledButton(
+                key: const Key('confirmDelivered'),
+                onPressed: canConfirm
+                    ? () => Navigator.of(context).pop((
+                          method: _paidOnline ? null : _method,
+                          slip: _needsSlip ? _slip : null,
+                        ))
+                    : null,
+                child: const Text('Teslim Ettim'),
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _CancellationReasonDialog extends StatefulWidget {
+  const _CancellationReasonDialog({required this.order});
+
+  final CourierWorkOrder order;
+
+  @override
+  State<_CancellationReasonDialog> createState() =>
+      _CancellationReasonDialogState();
+}
+
+class _CancellationReasonDialogState extends State<_CancellationReasonDialog> {
+  final _reason = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('${widget.order.orderNumber} — İptal Talebi'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Siparişi siz iptal edemezsiniz; talebiniz müdür veya yöneticinin '
+            'onayına gider. Neden teslim edemediğinizi yazın.',
+            style: AppTypography.bodySmall
+                .copyWith(color: AppColors.textSecondary),
+          ),
+          TextField(
+            key: const Key('cancelReason'),
+            controller: _reason,
+            maxLength: 300,
+            maxLines: 3,
+            minLines: 2,
+            decoration: InputDecoration(
+              labelText: 'Gerekçe',
+              errorText: _error,
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Vazgeç'),
+        ),
+        ElevatedButton(
+          key: const Key('cancelReasonSend'),
+          onPressed: () {
+            final text = _reason.text.trim();
+            if (text.length < 5) {
+              setState(() => _error = 'En az 5 karakterlik bir gerekçe yazın');
+              return;
+            }
+            Navigator.of(context).pop(text);
+          },
+          child: const Text('İptal Talebi Gönder'),
+        ),
+      ],
     );
   }
 }

@@ -8,6 +8,7 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../courier/presentation/screens/courier_dispatch_dashboard_screen.dart';
+import '../../../courier/presentation/screens/courier_oversight_screen.dart';
 import '../../../courier/presentation/screens/courier_pay_management_screen.dart';
 import '../../../courier/presentation/screens/courier_work_screen.dart';
 import '../../../pos/presentation/screens/courier_delivery_report_screen.dart';
@@ -320,6 +321,26 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
               child: RoleGate.forRoles(
                 const {StaffRole.manager, StaffRole.admin},
                 child: CourierPayManagementScreen(
+                  organizationId: ref.read(currentOrganizationIdProvider),
+                ),
+              ),
+            ),
+          ),
+          // ADR-085 stage 6B — payment-method changes at the door, with the
+          // slip photo; the server limits a manager to its branches.
+          _AdminNavItem(
+            id: 'courier-oversight',
+            label: 'Kurye Denetimi',
+            icon: Icons.fact_check_outlined,
+            visibleToRoles: const {StaffRole.manager, StaffRole.admin},
+            builder: (context, ref) => ModuleEntitlementGate(
+              module: EntitlementModule.courier,
+              scopeType: EntitlementScopeType.branch,
+              scopeId: branchId,
+              actorStaffId: actorId,
+              child: RoleGate.forRoles(
+                const {StaffRole.manager, StaffRole.admin},
+                child: CourierOversightScreen(
                   organizationId: ref.read(currentOrganizationIdProvider),
                 ),
               ),

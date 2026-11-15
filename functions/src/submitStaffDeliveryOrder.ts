@@ -72,6 +72,8 @@ export const STAFF_DELIVERY_PAYMENT_METHOD_IDS: ReadonlySet<string> = new Set([
   "multinet",
   "setcard",
   "edenred",
+  // ADR-085 stage 6B — MetropolCard, collected at the door by the courier.
+  "metropol_card",
 ]);
 
 function invalid(message: string): never {

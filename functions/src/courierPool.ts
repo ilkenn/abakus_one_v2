@@ -9,7 +9,6 @@ import { canTransition, type OrderStatus } from "./orderStatus";
 import { DELIVERY_SERVICE_AREAS_COLLECTION, slugifyAddressComponent } from "./deliveryServiceAreas";
 import { applyCourierAssignment, courierCanServeOrder } from "./courierAssignmentCore";
 import { orderAmountDueMinorUnits } from "./courierSettlement";
-import { STAFF_DELIVERY_PAYMENT_METHOD_IDS } from "./submitStaffDeliveryOrder";
 
 /**
  * 2026-11-12 (Faz 3a) — the external-courier delivery pool.
@@ -121,7 +120,7 @@ function requireString(raw: unknown, field: string): string {
   return (raw as string).trim();
 }
 
-function actorRolesFor(request: CallableRequest, organizationId: string): string[] | null {
+export function actorRolesFor(request: CallableRequest, organizationId: string): string[] | null {
   const roles = (request.auth?.token.roles as Record<string, unknown> | undefined)?.[organizationId];
   return Array.isArray(roles) ? (roles as string[]) : null;
 }
@@ -469,7 +468,7 @@ export const respondToCourierPoolRequest = onCall({ enforceAppCheck: shouldEnfor
   });
 });
 
-async function loadCourierOrder(request: CallableRequest, tx: Transaction, db: Firestore, orderId: string) {
+export async function loadCourierOrder(request: CallableRequest, tx: Transaction, db: Firestore, orderId: string) {
   const who = await requireCourierAccount(request, tx, db);
   const orderRef = db.collection("orders").doc(orderId);
   const projectionRef = db.collection(COURIER_ASSIGNED_ORDERS_COLLECTION).doc(orderId);
@@ -503,51 +502,8 @@ export const courierMarkDeparted = onCall({ enforceAppCheck: shouldEnforceAppChe
   });
 });
 
-/**
- * "Teslim Ettim" with the method the customer really paid. The order stays
- * `outForDelivery` ("Teslim Edildi — Mutabakat Bekliyor") until the POS
- * settlement; the courier's copy loses the customer's personal data now
- * (KVKK — see [COURIER_PII_FIELDS]).
- */
-export const courierReportDelivered = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request) => {
-  const data = (request.data ?? {}) as Record<string, unknown>;
-  const orderId = requireString(data.orderId, "orderId");
-  const paymentMethodId = requireString(data.paymentMethodId, "paymentMethodId");
-  if (!STAFF_DELIVERY_PAYMENT_METHOD_IDS.has(paymentMethodId)) {
-    invalid(`paymentMethodId "${paymentMethodId}" is not a pay-on-delivery method.`);
-  }
-  const db = getFirestore();
-  return db.runTransaction(async (tx) => {
-    const { uid, courierId, orderRef, order, projectionRef, projectionSnap } = await loadCourierOrder(request, tx, db, orderId);
-    if (order.courierReportedDeliveredAt) return { orderId, duplicate: true };
-    const now = Timestamp.now();
-    tx.set(orderRef, {
-      courierReportedDeliveredAt: now,
-      courierReportedPaymentMethodId: paymentMethodId,
-      ...(order.departedAt ? {} : { departedAt: now }),
-    }, { merge: true });
-    if (projectionSnap.exists) {
-      const projection = { ...projectionSnap.data()! };
-      for (const field of COURIER_PII_FIELDS) delete projection[field];
-      tx.set(projectionRef, {
-        ...projection,
-        status: "deliveredAwaitingSettlement",
-        deliveredAt: now,
-        reportedPaymentMethodId: paymentMethodId,
-        updatedAt: now,
-      });
-    }
-    writeAuditEvent({
-      tx, db, eventId: `courierDelivery-${orderId}-reported`, organizationId: order.organizationId as string,
-      branchId: order.branchId as string, type: "courierDelivery.reported", targetRef: orderRef.path,
-      previousValue: { paymentMethodId: (order.paymentMethodSnapshot?.paymentMethodId as string | undefined) ?? null },
-      newValue: { courierId, paymentMethodId },
-      actorType: "courier", actorUid: uid, actorRoles: actorRolesFor(request, order.organizationId as string),
-      correlationId: generateCorrelationId(), now,
-    });
-    return { orderId, duplicate: false };
-  });
-});
+// "Teslim Ettim" (`courierReportDelivered`) moved to `courierDeliveryControls.ts`
+// in ADR-085 stage 6B (payment-method rules and the slip photo).
 
 export type CourierProjectionStatus = "reserved" | "assigned" | "departed" | "deliveredAwaitingSettlement";
 
@@ -644,6 +600,8 @@ export function buildCourierAssignedOrderProjection(
     amountDueMinorUnits: orderAmountDueMinorUnits(order),
     plannedPaymentMethodId: (order.paymentMethodSnapshot?.paymentMethodId as string | undefined) ?? null,
     reportedPaymentMethodId: (order.courierReportedPaymentMethodId as string | undefined) ?? null,
+    // ADR-085 stage 6B — the courier's own cancellation request, if any.
+    cancellationRequestStatus: (order.courierCancellationStatus as string | undefined) ?? null,
     status,
     departedAt: order.departedAt ?? null,
     deliveredAt: order.courierReportedDeliveredAt ?? null,
@@ -654,7 +612,7 @@ const PROJECTION_INPUT_FIELDS = [
   "status", "assignedCourierId", "poolReservedCourierId", "poolStatus", "departedAt",
   "courierReportedDeliveredAt", "courierReportedPaymentMethodId", "contactPhone",
   "contactFirstName", "contactLastName", "deliveryAddressSnapshot", "customerNote",
-  "marketplaceProvider", "marketplaceOrderCode",
+  "marketplaceProvider", "marketplaceOrderCode", "courierCancellationStatus",
 ] as const;
 
 function projectionInputsChanged(before: DocumentData, after: DocumentData): boolean {

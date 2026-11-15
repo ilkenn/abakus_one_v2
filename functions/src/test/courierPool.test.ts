@@ -315,11 +315,12 @@ test("Yola Çıktım records departedAt only; Teslim Ettim keeps the order open 
 
   const badMethod = await callCallable(DELIVERED_URL, { orderId, paymentMethodId: "online_card" }, ali.idToken);
   assert.strictEqual(badMethod.body.error?.status, "INVALID_ARGUMENT");
-  const delivered = await callCallable(DELIVERED_URL, { orderId, paymentMethodId: "multinet" }, ali.idToken);
+  // A card/meal card now needs a slip photo (stage 6B, `courierDeliveryControls.test.ts`); cash does not.
+  const delivered = await callCallable(DELIVERED_URL, { orderId, paymentMethodId: "cash" }, ali.idToken);
   assert.strictEqual(delivered.httpStatus, 200, JSON.stringify(delivered.body));
   order = await orderDoc(orderId);
   assert.strictEqual(order.status, "outForDelivery", "Teslim Edildi — Mutabakat Bekliyor");
-  assert.strictEqual(order.courierReportedPaymentMethodId, "multinet");
+  assert.strictEqual(order.courierReportedPaymentMethodId, "cash");
   assert.ok(order.courierReportedDeliveredAt);
   const audit = await db().collection("auditEvents").doc(`courierDelivery-${orderId}-reported`).get();
   assert.ok(audit.exists);
@@ -334,7 +335,7 @@ test("Yola Çıktım records departedAt only; Teslim Ettim keeps the order open 
     assert.strictEqual(projection![field], undefined, `KVKK: ${field} gone after delivery`);
   }
   assert.ok(projection!.neighborhoodName, "the neighborhood stays for the courier's history");
-  assert.strictEqual(projection!.reportedPaymentMethodId, "multinet");
+  assert.strictEqual(projection!.reportedPaymentMethodId, "cash");
 
   // Settlement completes the order — the courier's copy disappears.
   await db().collection("orders").doc(orderId).update({ status: "completed" });

@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart' show Uint8List;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../bootstrap/firebase_ready_provider.dart';
@@ -27,6 +29,22 @@ final courierUriLauncherProvider =
     Provider<Future<void> Function(Uri uri)>((ref) {
   return (uri) async {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  };
+});
+
+/// ADR-085 stage 6B — the slip photo: the camera only (no gallery), so the
+/// photo is taken at the door. `null` when the courier cancels. Replaced in
+/// tests.
+final courierSlipCameraProvider =
+    Provider<Future<Uint8List?> Function()>((ref) {
+  return () async {
+    final photo = await ImagePicker().pickImage(
+      source: ImageSource.camera,
+      preferredCameraDevice: CameraDevice.rear,
+      imageQuality: 60,
+      maxWidth: 1600,
+    );
+    return photo?.readAsBytes();
   };
 });
 

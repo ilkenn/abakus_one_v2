@@ -26,6 +26,8 @@ import {
 } from "./cashRegisterEngine";
 import { applyStockCountAdjustment, applyStockCountAdjustmentRejected } from "./stockCountEngine";
 import { applyStaffActivation, applyStaffActivationRejected } from "./staffAccounts";
+import { holdsPermission } from "./staffScope";
+import { applyCourierOrderCancellation, applyCourierOrderCancellationRejected } from "./courierDeliveryControls";
 
 /**
  * AP-2 Stage B — the generic, server-authoritative remote approval engine
@@ -86,7 +88,11 @@ export type ApprovalActionType =
   | "stockCountAdjustment"
   // ADR-085 stage 1 — a staff account a manager added waits for an
   // admin/owner. Rejection removes the pending membership (REJECTION_HANDLERS).
-  | "staffActivation";
+  | "staffActivation"
+  // ADR-085 stage 6B — a courier cannot cancel an order; it asks with a
+  // reason, and a manager of the branch or an admin/owner decides
+  // (`courierDeliveryControls.ts`). Rejection keeps the delivery going.
+  | "courierOrderCancellation";
 
 const APPROVAL_TIMEOUT_MINUTES = 24 * 60;
 const ESCALATION_TIMEOUT_MINUTES = 24 * 60;
@@ -107,6 +113,8 @@ export interface ApprovalRequestRecord {
   createdAt: Timestamp;
   expiresAt: Timestamp;
   version: number;
+  /** Stage 6B — a short, human-readable line for the Onay Kutusu card. */
+  summary?: string | null;
 }
 
 export interface ActionHandlerResult {
@@ -151,6 +159,8 @@ const ACTION_HANDLERS: Readonly<Record<ApprovalActionType, ActionHandler>> = {
   cashReconciliation: applyCashReconciliationApproved,
   stockCountAdjustment: applyStockCountAdjustment,
   staffActivation: applyStaffActivation,
+  // Lazily bound: `courierDeliveryControls.ts` imports this module too.
+  courierOrderCancellation: (params) => applyCourierOrderCancellation(params),
 };
 
 /**
@@ -179,6 +189,7 @@ const REJECTION_HANDLERS: Readonly<Partial<Record<ApprovalActionType, ActionHand
   paymentRefund: applyPaymentRefundRejected,
   stockCountAdjustment: applyStockCountAdjustmentRejected,
   staffActivation: applyStaffActivationRejected,
+  courierOrderCancellation: (params) => applyCourierOrderCancellationRejected(params),
 };
 
 /** The staff permission required to RESPOND to (approve/reject) each action type — never a bare role-tier check. */
@@ -196,6 +207,8 @@ const RESPONSE_PERMISSION_BY_ACTION: Readonly<Record<ApprovalActionType, StaffPe
   // Admin/owner only (organization-wide, like device activation: an admin
   // starts with no branch access, so the response is not branch-scoped).
   staffActivation: "manageStaffAccounts",
+  // ADR-085 stage 6B — manager tier and above (Müdür, Yönetici, Sahip).
+  courierOrderCancellation: "manageDeliveryOrderCancellations",
 };
 
 /**
@@ -285,7 +298,7 @@ function sanitizeReasonMessage(value: unknown): string | null {
  * `requestDeviceRegistration`), which is what actually authorizes the request's
  * existence; this function itself does not re-check permission.
  */
-export async function createApprovalRequest(params: {
+export interface ApprovalRequestParams {
   organizationId: string;
   branchId: string;
   actionType: ApprovalActionType;
@@ -293,7 +306,39 @@ export async function createApprovalRequest(params: {
   targetAggregateRef: string;
   targetAggregateVersion: number;
   payloadHash: string;
-}): Promise<{ requestId: string; status: ApprovalStatus }> {
+  summary?: string | null;
+}
+
+/**
+ * Stage 6B — the record [createApprovalRequest] writes, for a caller that
+ * must write it inside its own transaction (so the request and the
+ * aggregate it targets appear together). Same deterministic id.
+ */
+export function buildApprovalRequestRecord(db: Firestore, params: ApprovalRequestParams, now: Timestamp) {
+  const requestId = `approval-${params.actionType}-${params.targetAggregateRef.replace(/\//g, "_")}-v${params.targetAggregateVersion}`;
+  const ref = db.collection("remoteApprovalRequests").doc(requestId);
+  const record: ApprovalRequestRecord = {
+    requestId,
+    organizationId: params.organizationId,
+    branchId: params.branchId,
+    actionType: params.actionType,
+    requestedByActorUid: params.requestedByActorUid,
+    targetAggregateRef: params.targetAggregateRef,
+    targetAggregateVersion: params.targetAggregateVersion,
+    payloadHash: params.payloadHash,
+    status: "pending",
+    respondedByActorUid: null,
+    respondedAt: null,
+    escalatedTo: null,
+    createdAt: now,
+    expiresAt: Timestamp.fromMillis(now.toMillis() + APPROVAL_TIMEOUT_MINUTES * 60_000),
+    version: 1,
+    summary: params.summary ?? null,
+  };
+  return { requestId, ref, record };
+}
+
+export async function createApprovalRequest(params: ApprovalRequestParams): Promise<{ requestId: string; status: ApprovalStatus }> {
   const db = getFirestore();
   const requestId = `approval-${params.actionType}-${params.targetAggregateRef.replace(/\//g, "_")}-v${params.targetAggregateVersion}`;
   const ref = db.collection("remoteApprovalRequests").doc(requestId);
@@ -357,6 +402,14 @@ export const respondToApprovalRequest = onCall(
     }
     await requireStaffPermission(request, pre.organizationId, RESPONSE_PERMISSION_BY_ACTION[pre.actionType]);
     if (BRANCH_SCOPED_RESPONSE_ACTION_TYPES.has(pre.actionType)) {
+      await requireBranchAccess(request, pre.organizationId, pre.branchId);
+    }
+    // ADR-085 stage 6B — a manager answers for its own branches; an
+    // admin/owner (organization-wide) for every branch.
+    if (
+      pre.actionType === "courierOrderCancellation" &&
+      !(await holdsPermission(request, pre.organizationId, "manageStaffAccounts"))
+    ) {
       await requireBranchAccess(request, pre.organizationId, pre.branchId);
     }
 

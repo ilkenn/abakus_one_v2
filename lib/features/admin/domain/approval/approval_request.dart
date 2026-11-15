@@ -30,6 +30,9 @@ enum ApprovalActionType {
   // ADR-085 stage 1 — a staff account a manager added, waiting for an
   // admin/owner (`functions/src/staffAccounts.ts`).
   staffActivation,
+  // ADR-085 stage 6B — a courier asks to cancel an order it cannot deliver
+  // (`functions/src/courierDeliveryControls.ts`).
+  courierOrderCancellation,
 }
 
 enum ApprovalStatus {
@@ -65,6 +68,8 @@ ApprovalActionType approvalActionTypeFromWire(String value) {
       return ApprovalActionType.stockCountAdjustment;
     case 'staffActivation':
       return ApprovalActionType.staffActivation;
+    case 'courierOrderCancellation':
+      return ApprovalActionType.courierOrderCancellation;
     default:
       throw ArgumentError('Unknown approval action type: $value');
   }
@@ -104,6 +109,7 @@ class ApprovalRequest {
     required this.createdAt,
     required this.expiresAt,
     required this.version,
+    this.summary,
   });
 
   final String requestId;
@@ -119,6 +125,10 @@ class ApprovalRequest {
   final DateTime createdAt;
   final DateTime expiresAt;
   final int version;
+
+  /// ADR-085 stage 6B — a short line written by the server for the card
+  /// (e.g. order number, courier, reason); `null` for older action types.
+  final String? summary;
 
   bool get isRespondable => status == ApprovalStatus.pending;
 

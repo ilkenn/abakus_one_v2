@@ -12190,6 +12190,45 @@ Product owner approved the data model, the Storage/Firestore rules and the 6A �
     reuse, carried lines; review and branch scope; payments, reversal, advance, balance, 366 days);
   - Storage rules: 2 new tests in `storage-tests/rules.test.js` (37/37);
   - app: `courier_invoices_test.dart` (7) and the "Fatura Keser" staff form test.
+
+### Stage 6B — payment safety at the door and courier cancellation requests (2026-11-15) — Visual Review Bekleniyor
+
+- **MetropolCard** (`metropol_card`) is a pay-on-delivery method: the courier's "Teslim Ettim", the cashier's
+  courier settlement, the server's `STAFF_DELIVERY_PAYMENT_METHOD_IDS`, and a Z report meal-card line (always
+  shown, even at 0). The POS's own new-delivery-order form was not changed.
+- **"Teslim Ettim" payment rules** (`courierDeliveryControls.ts`, which now owns `courierReportDelivered`):
+  - the courier may switch only between pay-on-delivery methods (cash, card on the POS, the meal cards);
+  - an order paid online asks no method and can never be switched;
+  - nothing can be switched to an online method.
+- **Slip photo, camera only.** Every card or meal-card collection needs a photo of the POS slip or the meal-card
+  approval, taken with the camera (`ImageSource.camera`; the sheet offers no gallery). It is uploaded under a
+  one-use `paymentSlip` grant for that order, and the server checks it is there, belongs to the order and is at
+  most 15 minutes old. "Teslim Ettim" stays disabled until it is taken; changing the method clears it.
+- **Change review.** A changed method writes `courierPaymentChanges/{orderId}` (old → new, courier, time, slip)
+  and an audit event, and pushes "Ödeme yöntemi değişti" to the branch's managers and every admin/owner. The
+  panel's new "Kurye Denetimi" lists the changes (pending first), shows the slip ("Slipi Gör") and marks them
+  "İncelendi" with an optional note. Unchanged card payments keep their slip on the order
+  (`courierPaymentSlipPath`), readable through `getCourierPaymentSlip`.
+- **Cancellation request.**
+  - A courier has no cancel permission (tested: `cancelDeliveryOrderForStaff` is refused).
+  - "İptal Talebi Gönder" (reason of at least 5 characters) writes `courierCancellationRequests/{orderId}` and a
+    `courierOrderCancellation` Onay Kutusu request in one transaction, and pushes "Kurye iptal talebi".
+  - Who decides: a manager of the branch or an admin/owner (without branch access too). An unanswered request
+    escalates after 24 hours like every approval.
+  - Approval cancels the order through the staff cancellation lifecycle (reason `operationalIssue`, the
+    courier's text in the audit); rejection keeps the delivery and tells the courier.
+  - The courier's card shows "İptal talebiniz müdür onayında" / "reddedildi — teslimata devam edin"; it can ask
+    again after a rejection.
+- Known limits:
+  - the camera-only rule is enforced by the app; a rooted phone could bypass it. The server-side checks (fresh,
+    one-use, for that order) narrow that;
+  - an online-paid order's settlement is unchanged (it was already outside the pay-on-delivery settlement).
+- Tests:
+  - server: `courierDeliveryControlsPure.test.ts` (3), `courierDeliveryControls.test.ts` (4 emulator);
+  - updated: `courierPool.test.ts` (delivery report now with cash), `externalTerminalTender.test.ts` (Z report
+    lists MetropolCard), `submitStaffDeliveryOrder.test.ts` (MetropolCard is no longer an invalid method);
+  - app: `courier_work_screen_test.dart` (slip, method change, online order, cancellation request),
+    `courier_oversight_screen_test.dart` (4).
 - Tests: `courierPayPure.test.ts` (6), `courierPay.test.ts` (4 emulator: form rate and pool rule,
   versions/back-dating/branch scope, the whole shift flow with earnings visibility, pool couriers),
   `courierSettlement.test.ts` (package lines at the rate in force; none without a profile),

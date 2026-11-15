@@ -43,6 +43,8 @@ const _actionTypeLabels = {
   ApprovalActionType.stockCountAdjustment: 'Stok Sayım Düzeltmesi',
   // ADR-085 stage 1.
   ApprovalActionType.staffActivation: 'Personel Onayı (Müdürün Eklediği)',
+  // ADR-085 stage 6B.
+  ApprovalActionType.courierOrderCancellation: 'Kurye İptal Talebi',
 };
 
 const _eligibleResponderRoles = {
@@ -271,6 +273,12 @@ class _ApprovalCardState extends ConsumerState<_ApprovalCard> {
               ],
             ),
             const SizedBox(height: AppSpacing.xs),
+            if (request.summary != null)
+              Text(
+                request.summary!,
+                key: Key('approvalSummary-${request.requestId}'),
+                style: AppTypography.bodyMedium,
+              ),
             Text(
               'Talep eden: ${request.requestedByActorUid} · '
               'Oluşturulma: ${request.createdAt}',

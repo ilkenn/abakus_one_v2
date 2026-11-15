@@ -21642,3 +21642,15 @@ owner):**
 - **New dependency:** `file_selector` (official flutter.dev) to pick the invoice PDF; `image_picker`
   cannot pick documents.
 - **Reports** may cover up to 366 days.
+
+**Update 2026-11-15 — stage 6B, payment safety at the door (product owner approved):**
+
+- **Only pay-on-delivery methods can be switched at the door;** an order paid online is locked, and nothing
+  switches to online. MetropolCard joins the pay-on-delivery methods and the Z report.
+- **Every card or meal-card collection needs a camera slip photo** (no gallery in the app), uploaded under a
+  one-use grant for that order, at most 15 minutes before "Teslim Ettim"; only changes go to the review queue.
+- **Changes are audited and reviewed** ("Kurye Denetimi") by a manager of the branch or an admin/owner, with a
+  push to them.
+- **A courier never cancels.** It sends a reasoned request to the Onay Kutusu (`courierOrderCancellation`); a
+  manager of the branch or an admin/owner decides, and an unanswered request escalates to the platform owner
+  after 24 hours. The request and its approval record are written in one transaction.

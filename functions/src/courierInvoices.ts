@@ -188,28 +188,44 @@ export const setCourierInvoicing = onCall({ enforceAppCheck: shouldEnforceAppChe
 
 /**
  * A one-use upload grant for the signed-in courier: `invoice` (PDF, JPEG
- * or PNG) now; `paymentSlip` (a camera photo, stage 6B) later.
+ * or PNG), or `paymentSlip` (stage 6B: a camera photo of the POS slip or
+ * meal-card approval, for one order out for delivery on this courier).
  */
 export const requestCourierUploadGrant = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
   const data = (request.data ?? {}) as Record<string, unknown>;
   const purpose = data.purpose;
-  if (purpose !== "invoice") invalid('purpose must be "invoice".');
+  if (purpose !== "invoice" && purpose !== "paymentSlip") invalid('purpose must be "invoice" or "paymentSlip".');
   const contentType = requireString(data.contentType, "contentType");
   if (!COURIER_DOCUMENT_CONTENT_TYPES.has(contentType)) {
     invalid("An invoice must be a PDF, JPEG or PNG file.", "courierInvoice/invalid-file");
   }
+  // Stage 6B — a payment-slip photo is an image, for one order on this courier.
+  const orderId = purpose === "paymentSlip" ? requireString(data.orderId, "orderId") : null;
+  if (purpose === "paymentSlip" && contentType === "application/pdf") {
+    invalid("A payment slip must be a camera photo.", "courierInvoice/invalid-file");
+  }
   const db = getFirestore();
   const grantRef = db.collection(COURIER_UPLOAD_GRANTS_COLLECTION).doc();
   return db.runTransaction(async (tx) => {
-    const { uid, account } = await requireCourierAccount(request, tx, db);
+    const { uid, account, courierId } = await requireCourierAccount(request, tx, db);
+    if (orderId) {
+      const orderSnap = await tx.get(db.collection("orders").doc(orderId));
+      const order = orderSnap.data();
+      if (!orderSnap.exists || order!.assignedCourierId !== courierId || order!.organizationId !== account.organizationId) {
+        throw new HttpsError("permission-denied", "This order is not assigned to you.");
+      }
+      if (order!.status !== "outForDelivery") {
+        precondition("The order is not out for delivery.", "courierPool/not-out-for-delivery");
+      }
+    }
     const now = Timestamp.now();
     const objectPath = `tenants/${account.organizationId}/courierDocuments/${uid}/${grantRef.id}`;
     const grant: CourierUploadGrantDoc = {
       organizationId: account.organizationId,
       staffUid: uid,
-      purpose: "invoice",
-      orderId: null,
+      purpose: purpose as CourierUploadGrantDoc["purpose"],
+      orderId,
       contentType,
       objectPath,
       status: "issued",

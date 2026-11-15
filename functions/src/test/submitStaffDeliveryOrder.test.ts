@@ -204,7 +204,7 @@ test("submitStaffDeliveryOrder: an invalid phone, a missing street, an unknown p
   for (const overrides of [
     { customer: { firstName: "Ayşe", lastName: "Demir", phone: "12345" } },
     { address: { neighborhoodName: "Caferağa" } },
-    { paymentMethodId: "metropol_card" },
+    { paymentMethodId: "bank_transfer" }, // MetropolCard is pay-on-delivery since ADR-085 stage 6B
     { deliveryFeeMinorUnits: -100 },
   ]) {
     const { httpStatus, body } = await callCallable(SUBMIT_URL, deliveryRequest(f, overrides), f.staff.idToken);

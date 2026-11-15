@@ -26,6 +26,8 @@ const posCollectionMethods = [
   (id: 'multinet', label: 'Multinet'),
   (id: 'setcard', label: 'Setcard'),
   (id: 'edenred', label: 'Edenred'),
+  // ADR-085 stage 6B.
+  (id: 'metropol_card', label: 'MetropolCard'),
 ];
 
 /// 2026-11-11 (Faz 2b) — "Kurye Döndü — Hesap Kapat" for one courier
