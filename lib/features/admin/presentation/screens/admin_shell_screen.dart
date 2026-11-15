@@ -56,6 +56,7 @@ import 'admin_overview_screen.dart';
 import 'admin_session_expired_screen.dart';
 import 'admin_unauthorized_screen.dart';
 import 'approval_inbox_screen.dart';
+import 'manager_actions_screen.dart';
 import 'audit_center_screen.dart';
 import 'branch_admin_screen.dart';
 import 'customer_management_screen.dart';
@@ -435,6 +436,20 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
                 StaffRole.admin,
               },
               child: const PosBranchOverviewScreen(),
+            ),
+          ),
+          // ADR-085 stage 6C-2 — what branch managers applied at once
+          // (comps, cancellations, cash differences); admin/owner only.
+          _AdminNavItem(
+            id: 'manager-actions',
+            label: 'Müdür İşlemleri',
+            icon: Icons.verified_user_outlined,
+            visibleToRoles: const {StaffRole.admin},
+            builder: (context, ref) => RoleGate.forRoles(
+              const {StaffRole.admin},
+              child: ManagerActionsScreen(
+                organizationId: ref.read(currentOrganizationIdProvider),
+              ),
             ),
           ),
           _AdminNavItem(

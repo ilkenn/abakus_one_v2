@@ -155,6 +155,19 @@ async function setupFixture(unitPriceMinorUnits = 10000): Promise<Fixture> {
   const tableSessionId = await seedActiveTableSession(organizationId, restaurantId, branchId, tableId);
   return { organizationId, restaurantId, branchId, tableId, tableSessionId, staff, admin1, manager, deviceId, deviceSessionId, productId };
 }
+/**
+ * An admin who also holds this branch (the bootstrap admin starts with no
+ * branch access, so it cannot operate a branch device by itself).
+ */
+async function newBranchAdmin(f: Fixture): Promise<{ idToken: string; uid: string }> {
+  const { idToken, refreshToken, uid } = await signUpAnonymously();
+  await db().collection("memberships").doc(`${f.organizationId}_${uid}`).set({
+    organizationId: f.organizationId, uid, roles: ["admin"], branchAccess: [f.branchId], restaurantAccess: [], status: "active", version: 1,
+  });
+  const sync = await callCallable(SYNC_CLAIMS_URL, {}, idToken);
+  assert.strictEqual(sync.httpStatus, 200, JSON.stringify(sync.body));
+  return { uid, idToken: await refreshIdToken(refreshToken) };
+}
 function checkCtx(f: Fixture) { return { organizationId: f.organizationId, branchId: f.branchId, deviceId: f.deviceId, deviceSessionId: f.deviceSessionId }; }
 
 async function openCheckWithOneAllocatedLine(f: Fixture, quantity = 1): Promise<{ checkId: string; orderId: string; subAccountId: string }> {
@@ -228,7 +241,7 @@ test("requestCheckFinancialAdjustment: percentage uses basis points and floors c
 test("requestCheckFinancialAdjustment: a staff member (not manager+) cannot approve — request-side and response-side permissions are genuinely different tiers", async () => {
   const f = await setupFixture(10000);
   const { checkId } = await openCheckWithOneAllocatedLine(f);
-  const request = await callCallable(REQUEST_ADJUSTMENT_URL, { ...checkCtx(f), checkId, scope: "check", adjustmentType: "complimentary", reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const request = await callCallable(REQUEST_ADJUSTMENT_URL, { ...checkCtx(f), checkId, scope: "check", adjustmentType: "complimentary", reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
 
   const respond = await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "approved" }, f.staff.idToken);
@@ -238,7 +251,7 @@ test("requestCheckFinancialAdjustment: a staff member (not manager+) cannot appr
 test("reverseCheckFinancialAdjustment: reversal is a NEW immutable compensating record, never a destructive edit of the original — restores the check total exactly", async () => {
   const f = await setupFixture(7500);
   const { checkId } = await openCheckWithOneAllocatedLine(f);
-  const request = await callCallable(REQUEST_ADJUSTMENT_URL, { ...checkCtx(f), checkId, scope: "check", adjustmentType: "complimentary", reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const request = await callCallable(REQUEST_ADJUSTMENT_URL, { ...checkCtx(f), checkId, scope: "check", adjustmentType: "complimentary", reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   const adjustmentId = request.body.result?.adjustmentId as string;
   await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "approved" }, f.manager.idToken);
 
@@ -286,7 +299,7 @@ for (const who of ["manager", "admin1"] as const) {
   test(`requestAcceptedLineCancellation (ADR-066): a ${who} cancels DIRECTLY — applied in the same call, no approval request, same provenance/event + an audit event`, async () => {
     const f = await setupFixture();
     const { orderId } = await openCheckWithOneAllocatedLine(f);
-    const actor = f[who];
+    const actor = who === "admin1" ? await newBranchAdmin(f) : f[who];
 
     const request = await callCallable(REQUEST_CANCELLATION_URL, { ...checkCtx(f), orderId, lineIndex: 0, reasonCode: "kitchenError", reasonMessage: "Yanlış ürün girildi." }, actor.idToken);
     assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
@@ -350,7 +363,7 @@ test("requestAcceptedLineCancellation: a pendingApproval or rejected line is not
   assert.strictEqual(submit.httpStatus, 200, JSON.stringify(submit.body));
   const orderId = submit.body.result?.orderId as string;
 
-  const request = await callCallable(REQUEST_CANCELLATION_URL, { ...checkCtx(f), orderId, lineIndex: 0, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const request = await callCallable(REQUEST_CANCELLATION_URL, { ...checkCtx(f), orderId, lineIndex: 0, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(request.httpStatus, 400, JSON.stringify(request.body)); // failed-precondition: still pendingApproval
 });
 
@@ -381,4 +394,111 @@ test("requestBoncukBalanceCorrection: writes exactly one loyalty adminAdjustment
   assert.strictEqual(ledgerSnap.size, 1);
   assert.strictEqual(ledgerSnap.docs[0].data().entryType, "adminAdjustment");
   assert.strictEqual(ledgerSnap.docs[0].data().spendableDeltaBoncuk, 10);
+});
+
+// -----------------------------------------------------------------------
+// ADR-085 stage 6C-2 — the manager acts at once, but never unseen.
+// -----------------------------------------------------------------------
+
+const LIST_OVERSIGHT_URL = fn("listOversightAlerts");
+const ACK_OVERSIGHT_URL = fn("acknowledgeOversightAlert");
+
+test("requestCheckFinancialAdjustment (6C-2): a manager's own comp applies at once with an audit event and an admin/owner alert", async () => {
+  const f = await setupFixture(8000);
+  const { checkId } = await openCheckWithOneAllocatedLine(f);
+  const request = await callCallable(REQUEST_ADJUSTMENT_URL, { ...checkCtx(f), checkId, scope: "check", adjustmentType: "complimentary", reasonCode: "guestComplaint", reasonMessage: "Bekleme uzun sürdü." }, f.manager.idToken);
+  assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
+  assert.strictEqual(request.body.result?.applied, true);
+  assert.strictEqual(request.body.result?.approvalRequestId, null);
+  assert.strictEqual(request.body.result?.appliedAmountMinorUnits, 8000);
+
+  assert.strictEqual((await db().collection("checks").doc(checkId).get()).data()!.computedTotalMinorUnits, 0);
+  const adjustmentId = request.body.result?.adjustmentId as string;
+  const adjustment = (await db().collection("checkFinancialAdjustments").doc(adjustmentId).get()).data()!;
+  assert.strictEqual(adjustment.status, "active");
+  assert.strictEqual(adjustment.approvalMode, "managerDirect");
+  const audit = await db().collection("auditEvents").doc(`${adjustmentId}-managerDirect`).get();
+  assert.strictEqual(audit.data()?.type, "checkFinancialAdjustment.appliedByManagerDirect");
+  assert.strictEqual(audit.data()?.reasonMessage, "Bekleme uzun sürdü.");
+  const alert = (await db().collection("oversightAlerts").doc(`comp-${adjustmentId}`).get()).data();
+  assert.strictEqual(alert?.type, "managerComp");
+  assert.strictEqual(alert?.amountMinorUnits, 8000);
+  assert.strictEqual(alert?.detail, "complimentary");
+  assert.strictEqual(alert?.actorUid, f.manager.uid);
+
+  // A reversal is a new record; the original stays untouched.
+  const reverse = await callCallable(REVERSE_ADJUSTMENT_URL, { ...checkCtx(f), adjustmentId }, f.manager.idToken);
+  assert.strictEqual(reverse.httpStatus, 200, JSON.stringify(reverse.body));
+  assert.strictEqual((await db().collection("checkFinancialAdjustments").doc(adjustmentId).get()).data()!.appliedAmountMinorUnits, 8000);
+});
+
+test("requestCheckFinancialAdjustment (6C-2): an admin applies at once without an alert; staff still waits for approval; a short reason is refused", async () => {
+  const f = await setupFixture(6000);
+  const { checkId } = await openCheckWithOneAllocatedLine(f);
+  const branchAdmin = await newBranchAdmin(f);
+  const byAdmin = await callCallable(REQUEST_ADJUSTMENT_URL, { ...checkCtx(f), checkId, scope: "check", adjustmentType: "percentage", percentageBasisPoints: 1000, reasonCode: "loyaltyGesture", reasonMessage: "Sadık müşteri." }, branchAdmin.idToken);
+  assert.strictEqual(byAdmin.httpStatus, 200, JSON.stringify(byAdmin.body));
+  assert.strictEqual(byAdmin.body.result?.applied, true);
+  assert.strictEqual((await db().collection("oversightAlerts").doc(`comp-${byAdmin.body.result?.adjustmentId}`).get()).exists, false);
+
+  const byStaff = await callCallable(REQUEST_ADJUSTMENT_URL, { ...checkCtx(f), checkId, scope: "check", adjustmentType: "fixedAmount", fixedAmountMinorUnits: 500, reasonCode: "loyaltyGesture", reasonMessage: "Küçük jest." }, f.staff.idToken);
+  assert.strictEqual(byStaff.httpStatus, 200, JSON.stringify(byStaff.body));
+  assert.strictEqual(byStaff.body.result?.applied, false);
+  assert.ok(byStaff.body.result?.approvalRequestId);
+  assert.strictEqual((await db().collection("oversightAlerts").doc(`comp-${byStaff.body.result?.adjustmentId}`).get()).exists, false);
+
+  const tooShort = await callCallable(REQUEST_ADJUSTMENT_URL, { ...checkCtx(f), checkId, scope: "check", adjustmentType: "complimentary", reasonCode: "x", reasonMessage: "ok" }, f.manager.idToken);
+  assert.strictEqual(tooShort.httpStatus, 400, JSON.stringify(tooShort.body));
+  assert.strictEqual((tooShort.body.error as { details?: { code?: string } } | undefined)?.details?.code, "reason/too-short");
+});
+
+test("requestAcceptedLineCancellation (6C-2): a manager's own cancellation opens an admin/owner alert; an admin's does not; a short reason is refused", async () => {
+  const f = await setupFixture();
+  const { orderId } = await openCheckWithOneAllocatedLine(f);
+  const short = await callCallable(REQUEST_CANCELLATION_URL, { ...checkCtx(f), orderId, lineIndex: 0, reasonCode: "kitchenError", reasonMessage: "abc" }, f.staff.idToken);
+  assert.strictEqual(short.httpStatus, 400, JSON.stringify(short.body));
+
+  const byManager = await callCallable(REQUEST_CANCELLATION_URL, { ...checkCtx(f), orderId, lineIndex: 0, reasonCode: "kitchenError", reasonMessage: "Yanlış ürün girildi." }, f.manager.idToken);
+  assert.strictEqual(byManager.httpStatus, 200, JSON.stringify(byManager.body));
+  const alert = (await db().collection("oversightAlerts").doc(`lineCancel-${byManager.body.result?.cancellationRequestId}`).get()).data();
+  assert.strictEqual(alert?.type, "managerLineCancellation");
+  assert.strictEqual(alert?.orderId, orderId);
+  assert.strictEqual(alert?.reason, "Yanlış ürün girildi.");
+
+  const f2 = await setupFixture();
+  const { orderId: orderId2 } = await openCheckWithOneAllocatedLine(f2);
+  const byAdmin = await callCallable(REQUEST_CANCELLATION_URL, { ...checkCtx(f2), orderId: orderId2, lineIndex: 0, reasonCode: "kitchenError", reasonMessage: "Yönetici iptali." }, (await newBranchAdmin(f2)).idToken);
+  assert.strictEqual(byAdmin.httpStatus, 200, JSON.stringify(byAdmin.body));
+  assert.strictEqual((await db().collection("oversightAlerts").doc(`lineCancel-${byAdmin.body.result?.cancellationRequestId}`).get()).exists, false);
+});
+
+test("oversight alerts (6C-2): only admin/owner list them and receive the push; the manager can neither list nor acknowledge; acknowledging changes nothing else", async () => {
+  const f = await setupFixture(4000);
+  const { checkId } = await openCheckWithOneAllocatedLine(f);
+  const comp = await callCallable(REQUEST_ADJUSTMENT_URL, { ...checkCtx(f), checkId, scope: "check", adjustmentType: "complimentary", reasonCode: "guestComplaint", reasonMessage: "Yemekte sorun çıktı." }, f.manager.idToken);
+  assert.strictEqual(comp.httpStatus, 200, JSON.stringify(comp.body));
+  const alertId = `comp-${comp.body.result?.adjustmentId}`;
+
+  const { handleOversightAlertCreated } = await import("../managerOversight");
+  const created = (await db().collection("oversightAlerts").doc(alertId).get()).data();
+  const push = await handleOversightAlertCreated(db(), alertId, created);
+  assert.ok(push);
+  assert.deepStrictEqual(push!.recipientUids, [f.admin1.uid], "admin/owner only — never the manager, never staff");
+
+  assert.strictEqual((await callCallable(LIST_OVERSIGHT_URL, { organizationId: f.organizationId }, f.manager.idToken)).httpStatus, 403);
+  assert.strictEqual((await callCallable(ACK_OVERSIGHT_URL, { organizationId: f.organizationId, alertId }, f.manager.idToken)).httpStatus, 403);
+
+  const list = await callCallable(LIST_OVERSIGHT_URL, { organizationId: f.organizationId }, f.admin1.idToken);
+  assert.strictEqual(list.httpStatus, 200, JSON.stringify(list.body));
+  const listed = (list.body.result?.alerts as Array<Record<string, unknown>>).find((a) => a.alertId === alertId);
+  assert.strictEqual(listed?.acknowledged, false);
+  assert.strictEqual(listed?.reason, "Yemekte sorun çıktı.");
+
+  const ack = await callCallable(ACK_OVERSIGHT_URL, { organizationId: f.organizationId, alertId }, f.admin1.idToken);
+  assert.strictEqual(ack.httpStatus, 200, JSON.stringify(ack.body));
+  const after = (await db().collection("oversightAlerts").doc(alertId).get()).data()!;
+  assert.ok(after.acknowledgedAt);
+  assert.strictEqual(after.acknowledgedByUid, f.admin1.uid);
+  assert.strictEqual(after.reason, created!.reason);
+  assert.strictEqual(after.amountMinorUnits, created!.amountMinorUnits);
 });

@@ -234,7 +234,7 @@ async function payAndApproveFullCash(f: Fixture): Promise<{ checkId: string; ses
 test("FIXED — wrong-branch approver denied: paymentRefund created at branch A is rejected when approved by a manager scoped only to branch B", async () => {
   const f = await setupFixture(10000);
   const { checkId } = await payAndApproveFullCash(f);
-  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
 
   const respond = await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "approved" }, f.managerB.idToken);
@@ -302,7 +302,7 @@ test("insufficient permission: a second staff member (not the requester, so not 
   const f = await setupFixture(10000);
   const secondStaff = await newStaffMember(f.organizationId, f.branchId, f.admin1.idToken, "staff");
   const { checkId } = await payAndApproveFullCash(f);
-  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
 
   const respond = await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "approved" }, secondStaff.idToken);
@@ -319,14 +319,14 @@ test("target changed while pending, AND rejection releases the reservation (FIXE
   const f = await setupFixture(10000);
   const { checkId } = await payAndApproveFullCash(f);
 
-  const first = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 7000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const first = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 7000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(first.httpStatus, 200, JSON.stringify(first.body));
 
   // A second request for an amount that only exceeds the remainder once the
   // FIRST request's still-pending amount is counted (10000 - 7000 = 3000
   // remains reservable) is rejected immediately — proving the reservation
   // accounts for pending, unresolved requests, not only resolved ones.
-  const second = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 7000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const second = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 7000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(second.httpStatus, 400, JSON.stringify(second.body));
   assert.strictEqual(second.body.error?.details?.code, "refund/exceeds-refundable");
 
@@ -342,7 +342,7 @@ test("target changed while pending, AND rejection releases the reservation (FIXE
   const rejectedRefundDoc = await db().collection("refundRequests").doc(first.body.result?.refundId as string).get();
   assert.strictEqual(rejectedRefundDoc.data()!.status, "rejected", "the rejected refund request's own status must transition to the real terminal state");
 
-  const third = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const third = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(third.httpStatus, 200, `a correct re-request for the full amount must now succeed once the rejected request's reservation is released — got ${JSON.stringify(third.body)}`);
 });
 
@@ -355,7 +355,7 @@ test("target changed while pending, AND rejection releases the reservation (FIXE
 test("exactly-once execution: two concurrent approve calls for the same refund request — the handler applies exactly once, not twice", async () => {
   const f = await setupFixture(10000);
   const { checkId } = await payAndApproveFullCash(f);
-  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
   const requestId = request.body.result?.approvalRequestId as string;
 
@@ -423,7 +423,7 @@ test("rejection closes without mutation (FIXED): a rejected paymentRefund never 
   }, f.staff.idToken);
   assert.strictEqual(attempt.body.result?.status, "succeeded", JSON.stringify(attempt.body));
 
-  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(request.httpStatus, 200, JSON.stringify(request.body));
 
   const respond = await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "rejected" }, f.manager.idToken);

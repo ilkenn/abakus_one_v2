@@ -178,7 +178,8 @@ class _PosCourierSettlementScreenState
       await ref.read(kitchenActionGatewayProvider).cancelOrder(
             orderId: order.orderId,
             channel: 'delivery',
-            reasonCode: reason,
+            reasonCode: reason.reasonCode,
+            reasonMessage: reason.reasonMessage,
           );
       _settlementKey = null;
       await _load();

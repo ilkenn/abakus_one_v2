@@ -178,7 +178,7 @@ test("listPaymentSessionsForBranch / listRefundsForBranch: reflect real sessions
   const sessions = list.body.result?.sessions as Array<{ sessionId: string; status: string }>;
   assert.ok(sessions.some((s) => s.sessionId === sessionId && s.status === "completed"));
 
-  const refundReq = await callCallable(fn("requestPaymentRefund"), { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.admin1.idToken);
+  const refundReq = await callCallable(fn("requestPaymentRefund"), { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.admin1.idToken);
   const refundList = await callCallable(LIST_REFUNDS_URL, { ...ctx(f) }, f.admin1.idToken);
   assert.strictEqual(refundList.httpStatus, 200, JSON.stringify(refundList.body));
   const refunds = refundList.body.result?.refunds as Array<{ refundId: string }>;

@@ -27,6 +27,7 @@ import '../../data/pos_operational_view_gateway.dart';
 import '../../domain/authorization/actor_session.dart';
 import '../../domain/authorization/pos_authorized_action.dart';
 import '../../domain/authorization/role_permission_map.dart';
+import '../../domain/staff_reason_rule.dart';
 import '../../../orders/domain/order_line_quantity_label.dart';
 import '../../domain/kitchen/kitchen_ticket_mapper.dart';
 import '../../domain/kitchen/kitchen_ticket_type.dart';
@@ -506,7 +507,7 @@ class _PosTableWorkspaceScreenState
       }) async {
         final checkId = _openedCheckId;
         if (checkId == null) return;
-        await _runAction(
+        final result = await _runAction(
           () => ref
               .read(posActionGatewayProvider)
               .requestCheckFinancialAdjustment(
@@ -522,6 +523,15 @@ class _PosTableWorkspaceScreenState
                 reasonMessage: reasonMessage,
               ),
         );
+        if (result == null || !mounted) return;
+        // ADR-085 stage 6C-2 — reports what the server actually did.
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(
+            content: Text(result.applied
+                ? 'Fiyat düzeltmesi uygulandı.'
+                : 'Fiyat düzeltmesi yönetici onayına gönderildi.'),
+          ));
       },
       onStartPayment: () => _startPayment(ctx),
     );
@@ -2442,6 +2452,10 @@ class _ReasonDialogState extends State<_ReasonDialog> {
   late String _reasonCode = widget.reasonCodes.keys.first;
   final _messageController = TextEditingController();
 
+  /// ADR-085 stage 6C-2 — shown under the field when the written reason is
+  /// shorter than [minStaffReasonLength].
+  String? _messageError;
+
   /// 2026-11-09 — true while [_ReasonDialog.onSubmit] is in flight. Both
   /// buttons are disabled meanwhile: a real report (6 identical
   /// `requestAcceptedLineCancellation` calls for one line, each ~7s on the
@@ -2452,7 +2466,11 @@ class _ReasonDialogState extends State<_ReasonDialog> {
   Future<void> _submit() async {
     if (_submitting) return;
     final message = _messageController.text.trim();
-    if (message.isEmpty) return;
+    final error = staffReasonError(message);
+    if (error != null) {
+      setState(() => _messageError = error);
+      return;
+    }
     final navigator = Navigator.of(context);
     setState(() => _submitting = true);
     try {
@@ -2495,7 +2513,14 @@ class _ReasonDialogState extends State<_ReasonDialog> {
           TextField(
             key: const Key('reasonMessageField'),
             controller: _messageController,
-            decoration: const InputDecoration(labelText: 'Açıklama'),
+            maxLength: 500,
+            onChanged: (_) {
+              if (_messageError != null) setState(() => _messageError = null);
+            },
+            decoration: InputDecoration(
+              labelText: 'Açıklama (zorunlu)',
+              errorText: _messageError,
+            ),
           ),
         ],
       ),
@@ -3041,6 +3066,7 @@ class _AdjustmentDialogState extends State<_AdjustmentDialog> {
   final _fixedAmountController = TextEditingController();
   String _reasonCode = 'customerSatisfaction';
   final _reasonMessageController = TextEditingController();
+  String? _reasonMessageError;
 
   @override
   void dispose() {
@@ -3177,7 +3203,16 @@ class _AdjustmentDialogState extends State<_AdjustmentDialog> {
             TextField(
               key: const Key('adjustmentReasonMessageField'),
               controller: _reasonMessageController,
-              decoration: const InputDecoration(labelText: 'Açıklama'),
+              maxLength: 500,
+              onChanged: (_) {
+                if (_reasonMessageError != null) {
+                  setState(() => _reasonMessageError = null);
+                }
+              },
+              decoration: InputDecoration(
+                labelText: 'Açıklama (zorunlu)',
+                errorText: _reasonMessageError,
+              ),
             ),
           ],
         ),
@@ -3190,7 +3225,11 @@ class _AdjustmentDialogState extends State<_AdjustmentDialog> {
         ElevatedButton(
           onPressed: () async {
             final message = _reasonMessageController.text.trim();
-            if (message.isEmpty) return;
+            final reasonError = staffReasonError(message);
+            if (reasonError != null) {
+              setState(() => _reasonMessageError = reasonError);
+              return;
+            }
             if (_scope == 'product' && _allocationId == null) return;
             if (_scope == 'subAccount' && _subAccountId == null) return;
             int? percentageBasisPoints;

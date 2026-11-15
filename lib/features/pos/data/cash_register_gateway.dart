@@ -22,6 +22,17 @@ class CashRegisterGatewayException implements Exception {
 /// `courierWorkOpen`): every courier package, cancellation request and
 /// payment-method change still open, one per line, in Turkish. `null` for
 /// any other refusal.
+/// ADR-085 stage 6C-2 — Turkish text for a refused cash command, from the
+/// server's details code; `null` keeps the server message.
+String? cashCommandMessage(Map<String, dynamic>? details) {
+  final courier = courierWorkOpenMessage(details);
+  if (courier != null) return courier;
+  if (details?['code'] == 'reason/too-short') {
+    return 'Sayımda fark var: en az 5 karakterlik bir açıklama yazın.';
+  }
+  return null;
+}
+
 String? courierWorkOpenMessage(Map<String, dynamic>? details) {
   if (details == null || details['code'] != 'courierWorkOpen') return null;
   List<Map<String, dynamic>> rows(String key) => [
@@ -74,13 +85,29 @@ class CashCountResult {
     required this.varianceType,
     required this.varianceAmountMinorUnits,
     required this.approvalRequestId,
+    this.status = 'pendingApproval',
   });
   final String countId;
   final int expectedAmountMinorUnits;
   final String varianceType;
   final int varianceAmountMinorUnits;
-  final String approvalRequestId;
+
+  /// `null` when the count was accepted at once (ADR-085 stage 6C-2: a
+  /// manager-tier user's own count).
+  final String? approvalRequestId;
+
+  /// `approved` (accepted at once) or `pendingApproval`.
+  final String status;
 }
+
+/// ADR-085 stage 6C-2 — the session's accepted cash count difference and
+/// its written reason, for the Z report.
+typedef CashCountDifference = ({
+  String type,
+  int amountMinorUnits,
+  String reason,
+  bool acceptedByManagerDirect,
+});
 
 class CashOpenSessionSummary {
   const CashOpenSessionSummary({required this.sessionId, required this.status});
@@ -283,7 +310,11 @@ class DailyRevenueSummary {
     this.mealCardBreakdown = const [],
     this.deliveryCollectionMinorUnits = 0,
     this.courierDifferenceMinorUnits = 0,
+    this.cashCountDifference,
   });
+
+  /// ADR-085 stage 6C-2 — `null` until a count with a difference is accepted.
+  final CashCountDifference? cashCountDifference;
 
   /// 2026-11-11 (Faz 2b) — pay-on-delivery collections settled into this
   /// session (already included in the tender lines above).
@@ -324,6 +355,8 @@ class DailyRevenueSummary {
           data['deliveryCollectionMinorUnits'] as int? ?? 0,
       courierDifferenceMinorUnits:
           data['courierDifferenceMinorUnits'] as int? ?? 0,
+      cashCountDifference:
+          _cashCountDifferenceFromWire(data['cashCountDifference'] as Map?),
       mealCardBreakdown: [
         for (final raw in (data['mealCardBreakdown'] as List?) ?? const [])
           MealCardRevenueLine.fromWire(Map<String, dynamic>.from(raw as Map)),
@@ -402,7 +435,7 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
         : null;
     throw CashRegisterGatewayException(
       error.code,
-      courierWorkOpenMessage(details) ??
+      cashCommandMessage(details) ??
           error.message ??
           'Kasa işlemi gerçekleştirilemedi.',
       details,
@@ -426,7 +459,7 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
       } on RestCallableException catch (error) {
         throw CashRegisterGatewayException(
           error.code,
-          courierWorkOpenMessage(error.details) ?? error.message,
+          cashCommandMessage(error.details) ?? error.message,
           error.details,
         );
       }
@@ -558,7 +591,8 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
       expectedAmountMinorUnits: data['expectedAmountMinorUnits'] as int,
       varianceType: variance['type'] as String,
       varianceAmountMinorUnits: variance['amountMinorUnits'] as int,
-      approvalRequestId: data['approvalRequestId'] as String,
+      approvalRequestId: data['approvalRequestId'] as String?,
+      status: data['status'] as String? ?? 'pendingApproval',
     );
   }
 
@@ -666,4 +700,14 @@ class UnavailableCashRegisterGateway implements CashRegisterGateway {
     required String sessionId,
   }) async =>
       _unavailable();
+}
+
+CashCountDifference? _cashCountDifferenceFromWire(Map? raw) {
+  if (raw == null) return null;
+  return (
+    type: raw['type'] as String? ?? 'exact',
+    amountMinorUnits: raw['amountMinorUnits'] as int? ?? 0,
+    reason: raw['reason'] as String? ?? '',
+    acceptedByManagerDirect: raw['acceptedByManagerDirect'] as bool? ?? false,
+  );
 }

@@ -330,7 +330,7 @@ test("refund: a cancelled order cannot be refunded", async () => {
   const orderId = await createTakeawayOrder(chain, productId, customer.idToken);
   await callCallable(RESPOND_URL, { orderId, decision: "confirm" }, staff.idToken);
   await callCallable(
-    fn("cancelTakeawayOrderForStaff"), { orderId, reasonCode: "operationalIssue" }, staff.idToken,
+    fn("cancelTakeawayOrderForStaff"), { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, staff.idToken,
   );
 
   const { httpStatus, body } = await callCallable(REFUND_URL, { orderId, reasonCode: "qualityIssue" }, manager.idToken);

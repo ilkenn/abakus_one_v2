@@ -1286,7 +1286,7 @@ test("29. end-to-end: staff cancels a confirmed dine-in order with a campaign di
 
   const cancel = await callCallable(
     ADVANCE_URL,
-    { orderId, targetStatus: "cancelled", reasonCode: "operationalIssue" },
+    { orderId, targetStatus: "cancelled", reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" },
     staff.idToken,
   );
   assert.strictEqual(cancel.httpStatus, 200, JSON.stringify(cancel.body));

@@ -28,7 +28,12 @@ class ZReportContent {
     required this.varianceType,
     required this.varianceAmountMinorUnits,
     this.complimentaryMinorUnits = 0,
+    this.varianceReason,
   });
+
+  /// ADR-085 stage 6C-2 — the written reason accepted for a cash count
+  /// difference; printed under "Fark" (none for an exact count).
+  final String? varianceReason;
 
   final String branchDisplayName;
   final String sessionId;
@@ -109,8 +114,12 @@ class ZReportContent {
       ..writeln('-' * 32)
       ..writeln('Beklenen Nakit: ${_fmt(expectedAmountMinorUnits)}')
       ..writeln('Sayılan Nakit: ${_fmt(actualAmountMinorUnits)}')
-      ..writeln('Fark: $varianceLabel ${_fmt(varianceAmountMinorUnits)}')
-      ..writeln('=' * 32);
+      ..writeln('Fark: $varianceLabel ${_fmt(varianceAmountMinorUnits)}');
+    final reason = varianceReason;
+    if (varianceType != 'exact' && reason != null && reason.isNotEmpty) {
+      buffer.writeln('Fark Gerekçesi: $reason');
+    }
+    buffer.writeln('=' * 32);
     return buffer.toString();
   }
 }

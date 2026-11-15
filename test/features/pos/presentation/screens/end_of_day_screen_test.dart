@@ -109,6 +109,7 @@ class _FakeCashRegisterGateway implements CashRegisterGateway {
 
   CashCountResult? countResult;
   bool closeCalled = false;
+  String? lastNotes;
 
   @override
   Future<CashCountResult> submitCashCount({
@@ -117,6 +118,7 @@ class _FakeCashRegisterGateway implements CashRegisterGateway {
     required int actualAmountMinorUnits,
     String notes = '',
   }) async {
+    lastNotes = notes;
     final result = countResult;
     if (result == null) throw UnimplementedError();
     return result;
@@ -354,5 +356,206 @@ void main() {
     expect(find.text('Gün kapatıldı'), findsOneWidget);
     expect(find.textContaining('İkram Toplamı: TL15.00'), findsOneWidget,
         reason: 'the plain-text preview must include the comp total too');
+  });
+
+  testWidgets(
+      'ADR-085 stage 6C-2: a cash difference needs a written reason, which '
+      'is sent as the count note and printed on the Z report', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final overviewGateway = _FakePosOperationalViewGateway();
+    final cashGateway = _FakeCashRegisterGateway()
+      ..drawers = [
+        const CashDrawerSummary(
+          drawerId: 'drawer-1',
+          name: 'Ana Kasa',
+          isActive: true,
+          openSession:
+              CashOpenSessionSummary(sessionId: 'sess-1', status: 'approved'),
+        ),
+      ]
+      ..sessionView = CashSessionView(
+        exists: true,
+        sessionId: 'sess-1',
+        drawerId: 'drawer-1',
+        status: 'approved',
+        businessDate: '2026-11-15',
+        openingFloatAmountMinorUnits: 0,
+        settledAmountMinorUnits: 10000,
+        currencyCode: 'TRY',
+        cashRegisterModel: 'sharedDrawer',
+        movements: [
+          CashMovementSummary(
+            type: 'cashSale',
+            amountMinorUnits: 10000,
+            reason: 'Satış',
+            timestamp: DateTime(2026, 11, 15, 10),
+          ),
+        ],
+      )
+      ..revenueSummary = const DailyRevenueSummary(
+        sessionId: 'sess-1',
+        currencyCode: 'TRY',
+        cashMinorUnits: 10000,
+        cardMinorUnits: 0,
+        otherMinorUnits: 0,
+        totalMinorUnits: 10000,
+      )
+      ..countResult = const CashCountResult(
+        countId: 'count-1',
+        expectedAmountMinorUnits: 10000,
+        varianceType: 'short',
+        varianceAmountMinorUnits: 500,
+        approvalRequestId: null,
+        status: 'approved',
+      );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          posOperationalViewGatewayProvider.overrideWithValue(overviewGateway),
+          cashRegisterGatewayProvider.overrideWithValue(cashGateway),
+          posDeviceContextProvider.overrideWithValue(_ctx),
+        ],
+        child: const MaterialApp(home: EndOfDayScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    await tester.enterText(find.byKey(const Key('actualAmountField')), '95.00');
+    await tester.pump();
+    expect(find.byKey(const Key('varianceReasonField')), findsOneWidget);
+    final closeButton = find.text('Günü Kapat ve Z Raporu Al');
+    await tester.tap(closeButton);
+    await tester.pump();
+    expect(cashGateway.closeCalled, isFalse,
+        reason: 'no reason yet — the count cannot be sent');
+
+    await tester.enterText(find.byKey(const Key('varianceReasonField')), 'abc');
+    await tester.pump();
+    expect(
+        find.text('En az 5 karakterlik bir açıklama yazın.'), findsOneWidget);
+
+    await tester.enterText(
+        find.byKey(const Key('varianceReasonField')), 'Bozuk para eksik çıktı');
+    await tester.pump();
+    await tester.tap(closeButton);
+    await tester.pumpAndSettle();
+
+    expect(cashGateway.lastNotes, 'Bozuk para eksik çıktı');
+    expect(cashGateway.closeCalled, isTrue);
+    expect(find.textContaining('Fark Gerekçesi: Bozuk para eksik çıktı'),
+        findsOneWidget);
+  });
+
+  testWidgets('an exact count sends no stock phrase as its note',
+      (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final cashGateway = _FakeCashRegisterGateway()
+      ..drawers = [
+        const CashDrawerSummary(
+          drawerId: 'drawer-1',
+          name: 'Ana Kasa',
+          isActive: true,
+          openSession:
+              CashOpenSessionSummary(sessionId: 'sess-1', status: 'approved'),
+        ),
+      ]
+      ..sessionView = CashSessionView(
+        exists: true,
+        sessionId: 'sess-1',
+        drawerId: 'drawer-1',
+        status: 'approved',
+        businessDate: '2026-11-15',
+        openingFloatAmountMinorUnits: 0,
+        settledAmountMinorUnits: 10000,
+        currencyCode: 'TRY',
+        cashRegisterModel: 'sharedDrawer',
+        movements: [
+          CashMovementSummary(
+            type: 'cashSale',
+            amountMinorUnits: 10000,
+            reason: 'Satış',
+            timestamp: DateTime(2026, 11, 15, 10),
+          ),
+        ],
+      )
+      ..revenueSummary = const DailyRevenueSummary(
+        sessionId: 'sess-1',
+        currencyCode: 'TRY',
+        cashMinorUnits: 10000,
+        cardMinorUnits: 0,
+        otherMinorUnits: 0,
+        totalMinorUnits: 10000,
+      )
+      ..countResult = const CashCountResult(
+        countId: 'count-1',
+        expectedAmountMinorUnits: 10000,
+        varianceType: 'exact',
+        varianceAmountMinorUnits: 0,
+        approvalRequestId: null,
+        status: 'approved',
+      );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          posOperationalViewGatewayProvider
+              .overrideWithValue(_FakePosOperationalViewGateway()),
+          cashRegisterGatewayProvider.overrideWithValue(cashGateway),
+          posDeviceContextProvider.overrideWithValue(_ctx),
+        ],
+        child: const MaterialApp(home: EndOfDayScreen()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.enterText(
+        find.byKey(const Key('actualAmountField')), '100.00');
+    await tester.pump();
+    expect(find.byKey(const Key('varianceReasonField')), findsNothing);
+    await tester.tap(find.text('Günü Kapat ve Z Raporu Al'));
+    await tester.pumpAndSettle();
+    expect(cashGateway.lastNotes, '');
+    expect(find.textContaining('Fark Gerekçesi'), findsNothing);
+  });
+
+  test('a refused count with a short reason reads in Turkish', () {
+    expect(cashCommandMessage({'code': 'reason/too-short'}),
+        'Sayımda fark var: en az 5 karakterlik bir açıklama yazın.');
+    expect(cashCommandMessage({'code': 'other'}), isNull);
+  });
+
+  test('the Z summary carries the accepted cash difference and its reason', () {
+    final summary = DailyRevenueSummary.fromWire({
+      'sessionId': 's',
+      'currencyCode': 'TRY',
+      'cashMinorUnits': 0,
+      'cardMinorUnits': 0,
+      'otherMinorUnits': 0,
+      'totalMinorUnits': 0,
+      'cashCountDifference': {
+        'type': 'short',
+        'amountMinorUnits': 300,
+        'reason': 'Bozuk para',
+        'acceptedByManagerDirect': true,
+      },
+    });
+    expect(summary.cashCountDifference, (
+      type: 'short',
+      amountMinorUnits: 300,
+      reason: 'Bozuk para',
+      acceptedByManagerDirect: true,
+    ));
+    expect(
+        DailyRevenueSummary.fromWire({
+          'sessionId': 's',
+          'currencyCode': 'TRY',
+          'cashMinorUnits': 0,
+          'cardMinorUnits': 0,
+          'otherMinorUnits': 0,
+          'totalMinorUnits': 0,
+        }).cashCountDifference,
+        isNull);
   });
 }

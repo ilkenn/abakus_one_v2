@@ -446,7 +446,7 @@ test("advance: an unauthenticated caller is denied", async () => {
 
 test("staffCancel: cancel from confirmed succeeds", async () => {
   const fx = await releasedPreorderFixture();
-  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "operationalIssue" }, fx.manager.idToken);
+  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, fx.manager.idToken);
   assert.strictEqual(httpStatus, 200, JSON.stringify(body));
   const order = await orderDoc(fx.orderId);
   assert.strictEqual(order?.status, "cancelled");
@@ -458,7 +458,7 @@ test("staffCancel: cancel from confirmed succeeds", async () => {
 test("staffCancel: cancel from preparing succeeds", async () => {
   const fx = await releasedPreorderFixture();
   await callCallable(ADVANCE_URL, { orderId: fx.orderId, targetStatus: "preparing" }, fx.manager.idToken);
-  const { httpStatus } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "kitchenUnavailable" }, fx.manager.idToken);
+  const { httpStatus } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "kitchenUnavailable", reasonMessage: "Test iptal gerekçesi" }, fx.manager.idToken);
   assert.strictEqual(httpStatus, 200);
   const order = await orderDoc(fx.orderId);
   assert.strictEqual(order?.status, "cancelled");
@@ -468,7 +468,7 @@ test("staffCancel: cancel from ready succeeds", async () => {
   const fx = await releasedPreorderFixture();
   await callCallable(ADVANCE_URL, { orderId: fx.orderId, targetStatus: "preparing" }, fx.manager.idToken);
   await callCallable(ADVANCE_URL, { orderId: fx.orderId, targetStatus: "ready" }, fx.manager.idToken);
-  const { httpStatus } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "capacityUnavailable" }, fx.manager.idToken);
+  const { httpStatus } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "capacityUnavailable", reasonMessage: "Test iptal gerekçesi" }, fx.manager.idToken);
   assert.strictEqual(httpStatus, 200);
   const order = await orderDoc(fx.orderId);
   assert.strictEqual(order?.status, "cancelled");
@@ -489,7 +489,7 @@ test("staffCancel: pendingConfirmation is explicitly rejected — must use the r
   );
   const orderId = submit.body.result!.preorderOrderId as string;
 
-  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "other" }, manager.idToken);
+  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, manager.idToken);
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
   assert.match(body.error?.message ?? "", /respondToReservation|cancelReservation/);
@@ -502,7 +502,7 @@ test("staffCancel: a served order cannot be cancelled — already handed to the 
   await callCallable(ADVANCE_URL, { orderId: fx.orderId, targetStatus: "preparing" }, fx.manager.idToken);
   await callCallable(ADVANCE_URL, { orderId: fx.orderId, targetStatus: "ready" }, fx.manager.idToken);
   await callCallable(ADVANCE_URL, { orderId: fx.orderId, targetStatus: "served" }, fx.manager.idToken);
-  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other" }, fx.manager.idToken);
+  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, fx.manager.idToken);
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
 });
@@ -510,7 +510,7 @@ test("staffCancel: a served order cannot be cancelled — already handed to the 
 test("staffCancel: a completed order cannot be cancelled — only refundReservationPreorderOrder can undo it", async () => {
   const fx = await releasedPreorderFixture();
   await advanceToCompleted(fx.orderId, fx.manager.idToken);
-  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other" }, fx.manager.idToken);
+  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, fx.manager.idToken);
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
 });
@@ -524,14 +524,14 @@ test("staffCancel: reasonCode is required", async () => {
 
 test("staffCancel: an unknown reasonCode is rejected", async () => {
   const fx = await releasedPreorderFixture();
-  const { httpStatus } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "notARealCode" }, fx.manager.idToken);
+  const { httpStatus } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "notARealCode", reasonMessage: "Test iptal gerekçesi" }, fx.manager.idToken);
   assert.strictEqual(httpStatus, 400);
 });
 
 test("staffCancel: retried after success is idempotent", async () => {
   const fx = await releasedPreorderFixture();
-  const first = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other" }, fx.manager.idToken);
-  const second = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other" }, fx.manager.idToken);
+  const first = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, fx.manager.idToken);
+  const second = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, fx.manager.idToken);
   assert.strictEqual(first.body.result?.duplicate, false);
   assert.strictEqual(second.body.result?.duplicate, true);
 });
@@ -539,7 +539,7 @@ test("staffCancel: retried after success is idempotent", async () => {
 test("staffCancel: ordinary 'staff' role (no manageReservations) is denied", async () => {
   const fx = await releasedPreorderFixture();
   const staff = await mintStaffIdToken(fx.chain.organizationId, ["staff"]);
-  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other" }, staff.idToken);
+  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, staff.idToken);
   assert.strictEqual(httpStatus, 403);
   assert.strictEqual(body.error?.status, "PERMISSION_DENIED");
   const order = await orderDoc(fx.orderId);
@@ -598,7 +598,7 @@ for (const partialStatus of ["preparing", "ready", "served"]) {
 
 test("refund: a cancelled order cannot be refunded", async () => {
   const fx = await releasedPreorderFixture();
-  await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other" }, fx.manager.idToken);
+  await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, fx.manager.idToken);
   const { httpStatus, body } = await callCallable(REFUND_URL, { orderId: fx.orderId, reasonCode: "qualityIssue" }, fx.manager.idToken);
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
@@ -716,7 +716,7 @@ test("loyalty chain C: confirmed+released to kitchen, THEN staff cancels via can
 
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "preparing" }, manager.idToken);
 
-  const cancel = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, manager.idToken);
+  const cancel = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, manager.idToken);
   assert.strictEqual(cancel.httpStatus, 200, JSON.stringify(cancel.body));
 
   const account = await waitFor(async () => {
@@ -945,7 +945,7 @@ test("completeReservation guard [P6-B microfix]: a linked preorder 'served' (han
 
 test("completeReservation guard: a linked preorder cancelled (e.g. via staff cancellation) blocks completion", async () => {
   const fx = await releasedPreorderFixture();
-  await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "operationalIssue" }, fx.manager.idToken);
+  await callCallable(CANCEL_STAFF_URL, { orderId: fx.orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, fx.manager.idToken);
   await forcePastConfirmedTime(fx.reservationId);
   const { httpStatus, body } = await callCallable(COMPLETE_URL, { reservationId: fx.reservationId }, fx.manager.idToken);
   assert.strictEqual(httpStatus, 400);

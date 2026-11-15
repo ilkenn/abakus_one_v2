@@ -19,6 +19,8 @@ import {
 } from "./loyaltyLedger";
 import type { LoyaltyAccountData } from "./getCustomerLoyaltySnapshot";
 import { prepareCancellationStockHandling, applyCancellationStockHandling } from "./cancelOrderLineStock";
+import { holdsPermission } from "./staffScope";
+import { oversightActorOf, recordManagerAction, requireStaffReason } from "./managerOversight";
 
 /**
  * AP-3 Wave 2C/2D — asynchronous, remote-approval-gated typed actions
@@ -74,6 +76,12 @@ interface CheckFinancialAdjustmentDoc {
   calculationSnapshot: { baseAmountMinorUnits: number; policyVersion: string };
   createdAt: Timestamp;
   version: number;
+  /**
+   * ADR-085 stage 6C-2 — `managerDirect`: the requester held
+   * `approveCheckFinancialAdjustment` and it applied at once (a branch
+   * manager's own is alerted to admin/owner). Absent = remote approval.
+   */
+  approvalMode?: "remoteApproval" | "managerDirect";
 }
 
 const POLICY_VERSION = "AP3-W2C-v1";
@@ -122,11 +130,15 @@ export const requestCheckFinancialAdjustment = onCall({ enforceAppCheck: shouldE
     data.adjustmentType, data.percentageBasisPoints, data.fixedAmountMinorUnits,
   );
   const reasonCode = requireNonEmptyString(data.reasonCode, "reasonCode");
-  const reasonMessage = requireNonEmptyString(data.reasonMessage, "reasonMessage");
+  const reasonMessage = requireStaffReason(data.reasonMessage);
 
   await requireStaffPermission(request, organizationId, "manageDineInOrders");
   await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
+  // ADR-085 stage 6C-2 — a manager-tier caller applies its own comp or
+  // discount at once (it could never approve its own request).
+  const managerDirect = await holdsPermission(request, organizationId, "approveCheckFinancialAdjustment");
+  const actor = await oversightActorOf(request, organizationId);
 
   const db = getFirestore();
   return db.runTransaction(async (tx) => {
@@ -178,7 +190,37 @@ export const requestCheckFinancialAdjustment = onCall({ enforceAppCheck: shouldE
       createdAt: now,
       version: 1,
     };
-    tx.set(adjustmentRef, doc);
+
+    if (managerDirect) {
+      const appliedAmountMinorUnits = Math.max(0, Math.min(requestedAppliedAmountMinorUnits, check.computedTotalMinorUnits));
+      tx.set(adjustmentRef, {
+        ...doc, status: "active", appliedAmountMinorUnits, approvalMode: "managerDirect", version: 2,
+      });
+      tx.update(checkRef, { computedTotalMinorUnits: check.computedTotalMinorUnits - appliedAmountMinorUnits, version: check.version + 1 });
+      const token = request.auth!.token as Record<string, unknown>;
+      const rolesByOrg = token.roles as Record<string, unknown> | undefined;
+      writeAuditEvent({
+        tx, db, eventId: `${adjustmentRef.id}-managerDirect`, organizationId, branchId,
+        type: "checkFinancialAdjustment.appliedByManagerDirect", targetRef: adjustmentRef.path,
+        previousValue: { computedTotalMinorUnits: check.computedTotalMinorUnits },
+        newValue: { scope, adjustmentType, appliedAmountMinorUnits },
+        actorType: "staff", actorUid: request.auth!.uid,
+        actorRoles: Array.isArray(rolesByOrg?.[organizationId]) ? (rolesByOrg![organizationId] as string[]) : null,
+        reasonCode, reasonMessage,
+        correlationId: generateCorrelationId(), clientRequestId: sanitizeClientRequestId(data.clientRequestId), now,
+      });
+      recordManagerAction(tx, db, actor, {
+        alertId: `comp-${adjustmentRef.id}`, organizationId, branchId, type: "managerComp",
+        targetRef: adjustmentRef.path, amountMinorUnits: appliedAmountMinorUnits, detail: adjustmentType,
+        reason: reasonMessage, now,
+      });
+      return {
+        adjustmentId: adjustmentRef.id, approvalRequestId: null, applied: true,
+        requestedAppliedAmountMinorUnits, appliedAmountMinorUnits,
+      };
+    }
+
+    tx.set(adjustmentRef, { ...doc, approvalMode: "remoteApproval" });
 
     const approval = await createApprovalRequest({
       organizationId, branchId, actionType: "checkFinancialAdjustment",
@@ -195,7 +237,7 @@ export const requestCheckFinancialAdjustment = onCall({ enforceAppCheck: shouldE
       correlationId: generateCorrelationId(), clientRequestId: sanitizeClientRequestId(data.clientRequestId), now,
     });
 
-    return { adjustmentId: adjustmentRef.id, approvalRequestId: approval.requestId, requestedAppliedAmountMinorUnits };
+    return { adjustmentId: adjustmentRef.id, approvalRequestId: approval.requestId, applied: false, requestedAppliedAmountMinorUnits };
   });
 });
 
@@ -367,12 +409,13 @@ export const requestAcceptedLineCancellation = onCall({ enforceAppCheck: shouldE
   if (typeof data.lineIndex !== "number" || !Number.isInteger(data.lineIndex) || data.lineIndex < 0) invalid("lineIndex must be a non-negative integer.");
   const lineIndex = data.lineIndex as number;
   const reasonCode = requireNonEmptyString(data.reasonCode, "reasonCode");
-  const reasonMessage = requireNonEmptyString(data.reasonMessage, "reasonMessage");
+  const reasonMessage = requireStaffReason(data.reasonMessage);
 
   await requireStaffPermission(request, organizationId, "manageDineInOrders");
   await requireBranchAccess(request, organizationId, branchId);
   await requireActiveDeviceSession(organizationId, branchId, deviceId, deviceSessionId);
   const managerDirect = await callerMayApproveLineCancellation(request, organizationId);
+  const actor = await oversightActorOf(request, organizationId);
 
   const db = getFirestore();
   return db.runTransaction(async (tx) => {
@@ -420,6 +463,13 @@ export const requestAcceptedLineCancellation = onCall({ enforceAppCheck: shouldE
         actorRoles: Array.isArray(rolesByOrg?.[organizationId]) ? (rolesByOrg![organizationId] as string[]) : null,
         reasonCode, reasonMessage,
         correlationId: generateCorrelationId(), clientRequestId: sanitizeClientRequestId(data.clientRequestId), now,
+      });
+      // ADR-085 stage 6C-2 — a branch manager's own cancellation is seen by admin/owner.
+      recordManagerAction(tx, db, actor, {
+        alertId: `lineCancel-${requestRef.id}`, organizationId, branchId, type: "managerLineCancellation",
+        targetRef: orderRef.path, orderId, orderNumber: typeof order.orderNumber === "string" ? order.orderNumber : null,
+        detail: String((lines[lineIndex] as Record<string, unknown>).productName ?? (lines[lineIndex] as Record<string, unknown>).name ?? ""),
+        reason: reasonMessage, now,
       });
       return { cancellationRequestId: requestRef.id, approvalRequestId: null, applied: true };
     }

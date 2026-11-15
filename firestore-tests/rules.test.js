@@ -6019,3 +6019,97 @@ test('Faz 4: a client cannot write belowMinimumOverride / estimatedDeliveryMinut
     await assertFails(updateDoc(doc(manager, 'orders/faz4-o1'), field), JSON.stringify(field));
   }
 });
+
+// ---------------------------------------------------------------------
+// ADR-085 stage 6C-2 — the "zero hidden action" shield. A branch manager
+// (full org + branch claims, the strongest non-admin client) can never
+// delete or rewrite history: orders, cancellations, comps, payment
+// changes, cash/Z records, fiscal journal, audit trail and the manager
+// alerts themselves are all server-written only.
+// ---------------------------------------------------------------------
+
+const SHIELD_RECORDS = [
+  ['orders/shield-order', { organizationId: 'org-1', branchId: 'branch-1', channel: 'delivery', status: 'cancelled', version: 3 }],
+  ['acceptedLineCancellationRequests/shield-lc', { organizationId: 'org-1', branchId: 'branch-1', orderId: 'shield-order', status: 'applied', reasonMessage: 'Yanlış ürün' }],
+  ['orderLineCancellationEvents/shield-lce', { organizationId: 'org-1', branchId: 'branch-1', orderId: 'shield-order' }],
+  ['courierCancellationRequests/shield-order', { organizationId: 'org-1', branchId: 'branch-1', status: 'approved', reason: 'Adres yok' }],
+  ['checkFinancialAdjustments/shield-comp', { organizationId: 'org-1', branchId: 'branch-1', status: 'active', appliedAmountMinorUnits: 5000, approvalMode: 'managerDirect' }],
+  ['courierPaymentChanges/shield-order', { organizationId: 'org-1', branchId: 'branch-1', status: 'pendingReview' }],
+  ['paymentAttempts/shield-pay', { organizationId: 'org-1', branchId: 'branch-1', status: 'succeeded', amountMinorUnits: 5000 }],
+  ['refundRequests/shield-refund', { organizationId: 'org-1', branchId: 'branch-1', status: 'succeeded' }],
+  ['deliveryCollections/shield-coll', { organizationId: 'org-1', branchId: 'branch-1', amountMinorUnits: 5000 }],
+  ['courierSettlements/shield-settle', { organizationId: 'org-1', branchId: 'branch-1', status: 'settled' }],
+  ['cashSessions/shield-session', { organizationId: 'org-1', branchId: 'branch-1', status: 'closed', settledAmountMinorUnits: 4700 }],
+  ['cashMovements/shield-move', { organizationId: 'org-1', branchId: 'branch-1', type: 'closingDifference', amountMinorUnits: -300 }],
+  ['cashCounts/shield-count', { organizationId: 'org-1', branchId: 'branch-1', actualAmountMinorUnits: 4700 }],
+  ['cashReconciliations/shield-recon', { organizationId: 'org-1', branchId: 'branch-1', status: 'approved', managerComments: 'Bozuk para eksik' }],
+  ['fiscalOperationJournal/shield-z', { organizationId: 'org-1', branchId: 'branch-1', operationType: 'dayEnd', status: 'succeeded' }],
+  ['auditEvents/shield-audit', { organizationId: 'org-1', branchId: 'branch-1', type: 'checkFinancialAdjustment.appliedByManagerDirect' }],
+  ['oversightAlerts/shield-alert', { organizationId: 'org-1', branchId: 'branch-1', type: 'managerComp', reason: 'İkram', acknowledgedAt: null }],
+  ['remoteApprovalRequests/shield-approval', { organizationId: 'org-1', branchId: 'branch-1', status: 'approved' }],
+];
+
+function shieldManager() {
+  return testEnv.authenticatedContext('shield-manager', {
+    organizationAccess: ['org-1'],
+    roles: { 'org-1': ['manager'] },
+    branchAccess: { 'org-1': ['branch-1'] },
+  }).firestore();
+}
+
+test('6C-2 shield: a branch manager cannot delete any order, cancellation, comp, payment, cash/Z, fiscal, audit or alert record', async () => {
+  await seed(async (db) => {
+    for (const [path, data] of SHIELD_RECORDS) await setDoc(doc(db, path), data);
+  });
+  const manager = shieldManager();
+  for (const [path] of SHIELD_RECORDS) {
+    await assertFails(deleteDoc(doc(manager, path)), `delete ${path}`);
+  }
+});
+
+test('6C-2 shield: a branch manager cannot rewrite the history of any of those records', async () => {
+  await seed(async (db) => {
+    for (const [path, data] of SHIELD_RECORDS) await setDoc(doc(db, path), data);
+  });
+  const manager = shieldManager();
+  const tamper = {
+    status: 'rejected',
+    amountMinorUnits: 0,
+    appliedAmountMinorUnits: 0,
+    settledAmountMinorUnits: 5000,
+    reason: 'silindi',
+    reasonMessage: 'silindi',
+    managerComments: '',
+    acknowledgedAt: new Date(),
+  };
+  for (const [path, data] of SHIELD_RECORDS) {
+    await assertFails(updateDoc(doc(manager, path), tamper), `update ${path}`);
+    await assertFails(setDoc(doc(manager, path), { ...data, status: 'rewritten' }), `overwrite ${path}`);
+  }
+});
+
+test('6C-2 shield: a branch manager cannot forge a new comp, cancellation, cash or Z record either', async () => {
+  const manager = shieldManager();
+  const forged = [
+    'checkFinancialAdjustments/forged-comp',
+    'acceptedLineCancellationRequests/forged-lc',
+    'courierCancellationRequests/forged-cc',
+    'courierPaymentChanges/forged-pc',
+    'cashCounts/forged-count',
+    'cashReconciliations/forged-recon',
+    'cashMovements/forged-move',
+    'fiscalOperationJournal/forged-z',
+    'auditEvents/forged-audit',
+    'oversightAlerts/forged-alert',
+  ];
+  for (const path of forged) {
+    await assertFails(setDoc(doc(manager, path), { organizationId: 'org-1', branchId: 'branch-1', status: 'active' }), `create ${path}`);
+  }
+});
+
+test('6C-2 shield: a branch manager cannot read the admin/owner manager-action alerts', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'oversightAlerts/shield-alert-read'), { organizationId: 'org-1', branchId: 'branch-1', type: 'managerComp' });
+  });
+  await assertFails(getDoc(doc(shieldManager(), 'oversightAlerts/shield-alert-read')));
+});

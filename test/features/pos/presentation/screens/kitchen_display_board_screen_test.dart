@@ -676,6 +676,9 @@ void main() {
 
       await tester.tap(find.text('Kapasite yetersiz'));
       await tester.pumpAndSettle();
+      // ADR-085 stage 6C-2 — a written reason is required.
+      await tester.enterText(
+          find.byKey(const Key('orderCancelReasonMessage')), 'Salon doldu');
       await tester
           .tap(find.widgetWithText(ElevatedButton, 'Siparişi İptal Et'));
       await tester.pumpAndSettle();

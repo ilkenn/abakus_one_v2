@@ -1032,7 +1032,7 @@ test("25. end-to-end: staff cancels an already-released (confirmed) reservation 
 
   const staffCancel = await callCallable(
     CANCEL_STAFF_URL,
-    { orderId, reasonCode: "operationalIssue" },
+    { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" },
     manager.idToken,
   );
   assert.strictEqual(staffCancel.httpStatus, 200, JSON.stringify(staffCancel.body));

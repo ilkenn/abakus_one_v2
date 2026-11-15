@@ -160,7 +160,8 @@ test("getCashSessionOperationalView: reflects real movements and counts after ac
   const view = await callCallable(VIEW_URL, { ...ctx(f), sessionId }, f.admin1.idToken);
   assert.strictEqual(view.httpStatus, 200, JSON.stringify(view.body));
   assert.strictEqual(view.body.result?.exists, true);
-  assert.strictEqual(view.body.result?.status, "pendingApproval");
+  // ADR-085 stage 6C-2 — an admin's own count is accepted at once.
+  assert.strictEqual(view.body.result?.status, "approved");
   const movements = view.body.result?.movements as Array<{ type: string }>;
   assert.ok(movements.some((m) => m.type === "openingFloat"));
   const counts = view.body.result?.counts as Array<{ expectedAmountMinorUnits: number }>;

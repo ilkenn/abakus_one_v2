@@ -618,7 +618,7 @@ test("staffCancel: pendingConfirmation is explicitly rejected — must use respo
   const orderId = await createDeliveryOrder(fixture, customer);
 
   const { httpStatus, body } = await callCallable(
-    CANCEL_STAFF_URL, { orderId, reasonCode: "other" }, staff.idToken,
+    CANCEL_STAFF_URL, { orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, staff.idToken,
   );
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
@@ -634,7 +634,7 @@ test("staffCancel: ordinary staff CAN cancel a confirmed order (manageDeliveryOr
   await callCallable(RESPOND_URL, { orderId, decision: "confirm" }, staff.idToken);
 
   const { httpStatus, body } = await callCallable(
-    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, staff.idToken,
+    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, staff.idToken,
   );
   assert.strictEqual(httpStatus, 200, JSON.stringify(body));
   assert.strictEqual(body.result?.status, "cancelled");
@@ -649,7 +649,7 @@ test("staffCancel: ordinary staff CANNOT cancel a preparing order — DENIED, re
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "preparing" }, staff.idToken);
 
   const { httpStatus, body } = await callCallable(
-    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, staff.idToken,
+    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, staff.idToken,
   );
   assert.strictEqual(httpStatus, 403);
   assert.strictEqual(body.error?.status, "PERMISSION_DENIED");
@@ -667,7 +667,7 @@ test("staffCancel: manager CAN cancel a preparing order", async () => {
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "preparing" }, staff.idToken);
 
   const { httpStatus, body } = await callCallable(
-    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, manager.idToken,
+    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, manager.idToken,
   );
   assert.strictEqual(httpStatus, 200, JSON.stringify(body));
   const order = await orderDoc(orderId);
@@ -684,7 +684,7 @@ test("staffCancel: manager CAN cancel a ready order", async () => {
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "preparing" }, staff.idToken);
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "ready" }, staff.idToken);
 
-  const { httpStatus } = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "customerNoShow" }, manager.idToken);
+  const { httpStatus } = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "customerNoShow", reasonMessage: "Test iptal gerekçesi" }, manager.idToken);
   assert.strictEqual(httpStatus, 200);
 });
 
@@ -700,12 +700,12 @@ test("staffCancel: manager CAN cancel an outForDelivery order — delivery's own
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "outForDelivery" }, staff.idToken);
 
   const ordinaryStaffAttempt = await callCallable(
-    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, staff.idToken,
+    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, staff.idToken,
   );
   assert.strictEqual(ordinaryStaffAttempt.httpStatus, 403, "ordinary staff must be denied for outForDelivery too");
 
   const { httpStatus, body } = await callCallable(
-    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, manager.idToken,
+    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, manager.idToken,
   );
   assert.strictEqual(httpStatus, 200, JSON.stringify(body));
   const order = await orderDoc(orderId);
@@ -724,7 +724,7 @@ test("staffCancel: a completed order cannot be cancelled", async () => {
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "outForDelivery" }, staff.idToken);
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "completed" }, staff.idToken);
 
-  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "other" }, manager.idToken);
+  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, manager.idToken);
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
 });
@@ -825,7 +825,7 @@ test("chain D: staff confirms then cancels while confirmed, with a Boncuk redemp
   const orderId = await createDeliveryOrder(fixture, customer, { requestedBoncukAmount: 50 });
 
   await callCallable(RESPOND_URL, { orderId, decision: "confirm" }, staff.idToken);
-  const cancel = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, staff.idToken);
+  const cancel = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, staff.idToken);
   assert.strictEqual(cancel.httpStatus, 200, JSON.stringify(cancel.body));
 
   const account = await waitFor(async () => {
@@ -855,4 +855,62 @@ test("concurrency: staff confirm vs customer cancel on the same pending order �
   const order = await orderDoc(orderId);
   assert.ok(order?.status === "confirmed" || order?.status === "cancelled");
   assert.strictEqual(order?.statusHistory?.length, 2, "only one real transition beyond creation must ever be recorded");
+});
+
+// =======================================================================
+// ADR-085 stage 6C-2 — a written reason for every staff cancellation; a
+// branch manager's own cancellation is alerted to admin/owner only.
+// =======================================================================
+
+test("staffCancel (6C-2): a reason shorter than 5 characters is refused, the order stays as it was", async () => {
+  const fixture = await seedDeliveryFixture();
+  const staff = await createStaffMember(fixture.chain.organizationId, ["staff"], [fixture.chain.branchId]);
+  const customer = await createDeliveryCustomer(fixture);
+  const orderId = await createDeliveryOrder(fixture, customer);
+  await callCallable(RESPOND_URL, { orderId, decision: "confirm" }, staff.idToken);
+
+  for (const reasonMessage of [undefined, "", "  abc "]) {
+    const { httpStatus, body } = await callCallable(
+      CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", ...(reasonMessage === undefined ? {} : { reasonMessage }) }, staff.idToken,
+    );
+    assert.strictEqual(httpStatus, 400, JSON.stringify(body));
+    assert.strictEqual((body.error as { details?: { code?: string } } | undefined)?.details?.code, "reason/too-short");
+  }
+  assert.strictEqual((await orderDoc(orderId))?.status, "confirmed");
+});
+
+test("staffCancel (6C-2): a manager's cancellation applies at once and opens an admin/owner alert; staff and admin cancellations open none", async () => {
+  const fixture = await seedDeliveryFixture();
+  const staff = await createStaffMember(fixture.chain.organizationId, ["staff"], [fixture.chain.branchId]);
+  const manager = await createStaffMember(fixture.chain.organizationId, ["manager"], [fixture.chain.branchId]);
+  const adminMember = await createStaffMember(fixture.chain.organizationId, ["admin"], [fixture.chain.branchId]);
+  const customer = await createDeliveryCustomer(fixture);
+
+  const byManager = await createDeliveryOrder(fixture, customer);
+  await callCallable(RESPOND_URL, { orderId: byManager, decision: "confirm" }, staff.idToken);
+  await callCallable(ADVANCE_URL, { orderId: byManager, targetStatus: "preparing" }, staff.idToken);
+  const cancel = await callCallable(CANCEL_STAFF_URL, { orderId: byManager, reasonCode: "operationalIssue", reasonMessage: "  Müşteri vazgeçti  " }, manager.idToken);
+  assert.strictEqual(cancel.httpStatus, 200, JSON.stringify(cancel.body));
+  assert.strictEqual((await orderDoc(byManager))?.status, "cancelled");
+  const alert = await db().collection("oversightAlerts").doc(`orderCancel-${byManager}`).get();
+  assert.ok(alert.exists, "a manager's own cancellation must be seen by admin/owner");
+  assert.strictEqual(alert.data()!.type, "managerOrderCancellation");
+  assert.strictEqual(alert.data()!.actorUid, manager.uid);
+  assert.strictEqual(alert.data()!.reason, "Müşteri vazgeçti");
+  assert.strictEqual(alert.data()!.branchId, fixture.chain.branchId);
+  assert.strictEqual(alert.data()!.acknowledgedAt, null);
+
+  const byStaff = await createDeliveryOrder(fixture, customer);
+  await callCallable(RESPOND_URL, { orderId: byStaff, decision: "confirm" }, staff.idToken);
+  assert.strictEqual((await callCallable(CANCEL_STAFF_URL, { orderId: byStaff, reasonCode: "other", reasonMessage: "Adres yanlış" }, staff.idToken)).httpStatus, 200);
+  assert.strictEqual((await db().collection("oversightAlerts").doc(`orderCancel-${byStaff}`).get()).exists, false);
+
+  const byAdmin = await createDeliveryOrder(fixture, customer);
+  await callCallable(RESPOND_URL, { orderId: byAdmin, decision: "confirm" }, staff.idToken);
+  await callCallable(ADVANCE_URL, { orderId: byAdmin, targetStatus: "preparing" }, staff.idToken);
+  assert.strictEqual((await callCallable(CANCEL_STAFF_URL, { orderId: byAdmin, reasonCode: "other", reasonMessage: "Yönetici iptali" }, adminMember.idToken)).httpStatus, 200);
+  assert.strictEqual((await db().collection("oversightAlerts").doc(`orderCancel-${byAdmin}`).get()).exists, false);
+
+  const audit = await db().collection("auditEvents").doc(`${byManager}-status-preparing-cancelled`).get();
+  assert.strictEqual(audit.data()?.reasonMessage, "Müşteri vazgeçti", "the reason is in the audit trail");
 });

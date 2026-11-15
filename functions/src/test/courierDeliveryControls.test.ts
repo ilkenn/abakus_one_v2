@@ -205,7 +205,7 @@ test("a changed method is recorded, notified, and reviewed by the branch's manag
 test("cancellation: the courier cannot cancel, only ask with a reason; the Onay Kutusu rejects or approves", async () => {
   const s = await setup();
   const order = await outForDeliveryOrder(s);
-  const direct = await callCallable(STAFF_CANCEL_URL, { orderId: order, reasonCode: "other" }, s.courier.idToken);
+  const direct = await callCallable(STAFF_CANCEL_URL, { orderId: order, reasonCode: "other", reasonMessage: "Kurye iptal etmek istiyor" }, s.courier.idToken);
   assert.strictEqual(direct.httpStatus, 403, "no direct cancellation for a courier");
 
   const ask = (reason: string) => callCallable(CANCEL_REQUEST_URL, { orderId: order, reason }, s.courier.idToken);

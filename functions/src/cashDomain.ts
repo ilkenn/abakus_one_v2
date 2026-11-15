@@ -230,6 +230,12 @@ export interface CashReconciliationDoc {
   managerComments: string;
   varianceAccepted: boolean;
   variance: CashVarianceSnapshot;
+  /**
+   * ADR-085 stage 6C-2 — `managerDirect`: a manager-tier user's own count,
+   * accepted at once (a difference needs a written reason, shown on the
+   * Z report and alerted to admin/owner). Absent = remote approval.
+   */
+  approvalMode?: "remoteApproval" | "managerDirect";
 }
 
 // ---------------------------------------------------------------------

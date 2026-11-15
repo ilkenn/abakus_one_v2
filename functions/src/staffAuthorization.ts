@@ -341,6 +341,10 @@ export const DEFAULT_STAFF_ROLE_PERMISSIONS: Readonly<Record<string, readonly St
     "approvePaymentRefund",
     "manageCashSessions",
     "approveCashReconciliation",
+    // ADR-085 stage 6C-2 — the branch manager runs the fiscal device of its
+    // own branch (sales, refunds, the fiscal day end); every fiscal command
+    // still checks branch access and an active trusted-device session.
+    "manageFiscalDevices",
     // AP-5 Sprint 2 fix: these three were only ever added to `admin`/
     // `tenantOwner` (anchored on the `manageFiscalDevices` line neither
     // of Sprint 1/2's edits realized `manager` doesn't have) — `manager`

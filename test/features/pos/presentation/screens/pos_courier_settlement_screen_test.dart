@@ -251,6 +251,8 @@ void main() {
     await tester.tap(find.byKey(const Key('undelivered-b')));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.enterText(
+        find.byKey(const Key('orderCancelReasonMessage')), 'Adreste kimse yok');
     await tester.tap(find.text('Siparişi İptal Et').last);
     await tester.pumpAndSettle();
 

@@ -156,6 +156,13 @@ export {
   sweepLateCourierDeliveries,
   onOperationalAlertWrittenNotify,
 } from "./courierFieldAlerts";
+// ADR-085 stage 6C-2 — "Müdür İşlemleri": a branch manager's own comps,
+// cancellations and cash differences, alerted to admin/owner.
+export {
+  listOversightAlerts,
+  acknowledgeOversightAlert,
+  onOversightAlertCreatedNotify,
+} from "./managerOversight";
 // 2026-11-12 (Faz 3a) — external-courier delivery pool: "Havuza Gönder" /
 // "Havuzdan Geri Al", the courier's "Talep Oluştur", staff approve/reject,
 // the courier's "Yola Çıktım" / "Teslim Ettim", and the trigger keeping the

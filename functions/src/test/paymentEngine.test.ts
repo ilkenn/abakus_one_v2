@@ -549,7 +549,7 @@ test("refund: a full cash refund, once manager-approved, resolves succeeded and 
 test("refund: a staff member (not manager+) cannot approve their own refund request", async () => {
   const f = await setupFixture(10000);
   const { checkId } = await payAndApproveFullCash(f);
-  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   const res = await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "approved" }, f.staff.idToken);
   assert.strictEqual(res.httpStatus, 403, JSON.stringify(res.body));
 });
@@ -558,10 +558,10 @@ test("refund: double-refund is prevented — a second full-amount refund request
   const f = await setupFixture(10000);
   const { checkId } = await payAndApproveFullCash(f);
 
-  const first = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const first = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   await callCallable(RESPOND_APPROVAL_URL, { requestId: first.body.result?.approvalRequestId, decision: "approved" }, f.manager.idToken);
 
-  const second = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 1, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const second = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 1, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(second.httpStatus, 400, JSON.stringify(second.body));
   assert.strictEqual(second.body.error?.details?.code, "refund/exceeds-refundable");
 });
@@ -570,14 +570,14 @@ test("refund: a partial refund apportions correctly and leaves the remaining amo
   const f = await setupFixture(10000);
   const { checkId } = await payAndApproveFullCash(f);
 
-  const partial = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 4000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const partial = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 4000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(partial.httpStatus, 200, JSON.stringify(partial.body));
   await callCallable(RESPOND_APPROVAL_URL, { requestId: partial.body.result?.approvalRequestId, decision: "approved" }, f.manager.idToken);
 
   // Exactly 6000 remains refundable — asking for 6001 must fail, 6000 must succeed.
-  const tooMuch = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 6001, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const tooMuch = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 6001, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(tooMuch.httpStatus, 400, JSON.stringify(tooMuch.body));
-  const exact = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 6000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const exact = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "partial", amountMinorUnits: 6000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   assert.strictEqual(exact.httpStatus, 200, JSON.stringify(exact.body));
 });
 
@@ -633,7 +633,7 @@ test("refund of a drawer-linked cash payment writes a real negative cashRefund m
   }, f.staff.idToken);
   assert.strictEqual(attempt.body.result?.status, "succeeded");
 
-  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "y" }, f.staff.idToken);
+  const request = await callCallable(REQUEST_REFUND_URL, { ...ctx(f), checkId, refundType: "full", amountMinorUnits: 10000, reasonCode: "x", reasonMessage: "Test gerekçesi y" }, f.staff.idToken);
   await callCallable(RESPOND_APPROVAL_URL, { requestId: request.body.result?.approvalRequestId, decision: "approved" }, f.manager.idToken);
 
   const refundMovementsSnap = await db().collection("cashMovements").where("sessionId", "==", cashSessionId).where("type", "==", "cashRefund").get();

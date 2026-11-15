@@ -511,3 +511,73 @@ test("getDailyRevenueSummary: buckets cash/card/{mealCard,boncuk->other}, exclud
   assert.strictEqual(res.body.result?.totalMinorUnits, 33500);
   assert.strictEqual(res.body.result?.currencyCode, "TRY");
 });
+
+// -----------------------------------------------------------------------
+// ADR-085 stage 6C-2 — a manager's own count is accepted at once; a
+// difference needs a written reason, is on the Z report and is alerted to
+// admin/owner. A cashier's count still waits for a manager.
+// -----------------------------------------------------------------------
+
+test("count (6C-2): a manager's own SHORT count needs a reason, then is accepted at once, alerted, and shown on the Z report", async () => {
+  const f = await setupFixture();
+  const drawerId = await createDrawer(f);
+  const sessionId = await openSessionAsManager(f, drawerId, 5000);
+
+  const noReason = await callCallable(SUBMIT_COUNT_URL, { ...ctx(f), sessionId, actualAmountMinorUnits: 4700, notes: "ok" }, f.manager.idToken);
+  assert.strictEqual(noReason.httpStatus, 400, JSON.stringify(noReason.body));
+  assert.strictEqual((noReason.body.error as { details?: { code?: string } } | undefined)?.details?.code, "reason/too-short");
+  assert.strictEqual((await db().collection("cashSessions").doc(sessionId).get()).data()!.status, "active", "a refused count leaves the session as it was");
+
+  const count = await callCallable(SUBMIT_COUNT_URL, { ...ctx(f), sessionId, actualAmountMinorUnits: 4700, notes: "Bozuk para eksik çıktı." }, f.manager.idToken);
+  assert.strictEqual(count.httpStatus, 200, JSON.stringify(count.body));
+  assert.strictEqual(count.body.result?.status, "approved");
+  assert.strictEqual(count.body.result?.approvalRequestId, null);
+
+  const session = (await db().collection("cashSessions").doc(sessionId).get()).data()!;
+  assert.strictEqual(session.status, "approved");
+  assert.strictEqual(session.settledAmountMinorUnits, 4700);
+  const reconciliation = (await db().collection("cashReconciliations").doc(session.finalReconciliationId).get()).data()!;
+  assert.strictEqual(reconciliation.approvalMode, "managerDirect");
+  assert.strictEqual(reconciliation.managerComments, "Bozuk para eksik çıktı.");
+  const diff = await db().collection("cashMovements").where("sessionId", "==", sessionId).where("type", "==", "closingDifference").get();
+  assert.strictEqual(diff.size, 1);
+  assert.strictEqual(diff.docs[0].data().amountMinorUnits, -300);
+
+  const countId = count.body.result?.countId as string;
+  const alert = (await db().collection("oversightAlerts").doc(`cashVariance-${countId}`).get()).data();
+  assert.strictEqual(alert?.type, "managerCashVariance");
+  assert.strictEqual(alert?.detail, "short");
+  assert.strictEqual(alert?.amountMinorUnits, 300);
+  assert.strictEqual(alert?.reason, "Bozuk para eksik çıktı.");
+  assert.strictEqual((await db().collection("auditEvents").doc(`${countId}-managerDirect`).get()).data()?.type, "cashCount.acceptedByManagerDirect");
+
+  const z = await callCallable(GET_DAILY_REVENUE_URL, { ...ctx(f), sessionId }, f.manager.idToken);
+  assert.strictEqual(z.httpStatus, 200, JSON.stringify(z.body));
+  assert.deepStrictEqual(z.body.result?.cashCountDifference, {
+    type: "short", amountMinorUnits: 300, reason: "Bozuk para eksik çıktı.", acceptedByManagerDirect: true,
+  });
+
+  const close = await callCallable(CLOSE_SESSION_URL, { ...ctx(f), sessionId }, f.manager.idToken);
+  assert.strictEqual(close.httpStatus, 200, JSON.stringify(close.body));
+});
+
+test("count (6C-2): a manager's EXACT count is accepted at once without an alert; a cashier's count still goes to manager approval", async () => {
+  const f = await setupFixture();
+  const drawerId = await createDrawer(f);
+  const sessionId = await openSessionAsManager(f, drawerId, 5000);
+  const exact = await callCallable(SUBMIT_COUNT_URL, { ...ctx(f), sessionId, actualAmountMinorUnits: 5000, notes: "" }, f.manager.idToken);
+  assert.strictEqual(exact.httpStatus, 200, JSON.stringify(exact.body));
+  assert.strictEqual(exact.body.result?.status, "approved");
+  assert.strictEqual((await db().collection("oversightAlerts").doc(`cashVariance-${exact.body.result?.countId}`).get()).exists, false);
+  const z = await callCallable(GET_DAILY_REVENUE_URL, { ...ctx(f), sessionId }, f.manager.idToken);
+  assert.strictEqual(z.body.result?.cashCountDifference, null);
+
+  const f2 = await setupFixture();
+  const drawer2 = await createDrawer(f2);
+  const session2 = await openSessionAsManager(f2, drawer2, 5000);
+  const byCashier = await callCallable(SUBMIT_COUNT_URL, { ...ctx(f2), sessionId: session2, actualAmountMinorUnits: 4000, notes: "" }, f2.staff.idToken);
+  assert.strictEqual(byCashier.httpStatus, 200, JSON.stringify(byCashier.body));
+  assert.strictEqual(byCashier.body.result?.status, "pendingApproval");
+  assert.ok(byCashier.body.result?.approvalRequestId);
+  assert.strictEqual((await db().collection("oversightAlerts").doc(`cashVariance-${byCashier.body.result?.countId}`).get()).exists, false);
+});

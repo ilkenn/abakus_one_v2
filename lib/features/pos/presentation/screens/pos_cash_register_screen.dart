@@ -186,13 +186,23 @@ class _PosCashRegisterScreenState extends ConsumerState<PosCashRegisterScreen> {
       _actionError = null;
     });
     try {
-      await ref.read(cashRegisterGatewayProvider).submitCashCount(
-            ctx: ctx,
-            sessionId: sessionId,
-            actualAmountMinorUnits: actualAmountMinorUnits,
-            notes: notes,
-          );
+      final result =
+          await ref.read(cashRegisterGatewayProvider).submitCashCount(
+                ctx: ctx,
+                sessionId: sessionId,
+                actualAmountMinorUnits: actualAmountMinorUnits,
+                notes: notes,
+              );
       await _refreshSession();
+      if (!mounted) return;
+      // ADR-085 stage 6C-2 — a manager's own count is accepted at once.
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(
+          content: Text(result.status == 'approved'
+              ? 'Sayım kabul edildi.'
+              : 'Sayım yönetici onayına gönderildi.'),
+        ));
     } on CashRegisterGatewayException catch (e) {
       setState(() => _actionError = e.message);
     } finally {
@@ -618,8 +628,8 @@ class _SessionDetailPanel extends StatelessWidget {
               ),
               TextField(
                 controller: notesController,
-                decoration:
-                    const InputDecoration(labelText: 'Not (isteğe bağlı)'),
+                decoration: const InputDecoration(
+                    labelText: 'Açıklama (fark varsa zorunlu)'),
               ),
             ],
           ),

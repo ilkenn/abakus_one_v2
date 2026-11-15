@@ -294,7 +294,7 @@ class _FakePosActionGateway implements PosActionGateway {
       throw UnimplementedError();
 
   @override
-  Future<String> requestCheckFinancialAdjustment({
+  Future<CheckFinancialAdjustmentResult> requestCheckFinancialAdjustment({
     required PosDeviceContext ctx,
     required String checkId,
     required String scope,

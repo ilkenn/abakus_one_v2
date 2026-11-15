@@ -166,7 +166,7 @@ test("renewEntitlement: clears grace state and returns to \"active\"; a revoked 
     owner.idToken,
   );
   const entitlementId = grant.body.result?.entitlementId as string;
-  await callCallable(SUSPEND_ENTITLEMENT_URL, { entitlementId, reasonMessage: "temp" }, owner.idToken);
+  await callCallable(SUSPEND_ENTITLEMENT_URL, { entitlementId, reasonMessage: "Test gerekçesi temp" }, owner.idToken);
 
   const renew = await callCallable(
     RENEW_ENTITLEMENT_URL,

@@ -1,6 +1,14 @@
 {
   "indexes": [
     {
+      "collectionGroup": "oversightAlerts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "courierEarnings",
       "queryScope": "COLLECTION",
       "fields": [

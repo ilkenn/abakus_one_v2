@@ -2,52 +2,109 @@ import 'package:flutter/material.dart';
 
 import '../../../orders/domain/models/order_channel.dart';
 import '../../data/kitchen_action_gateway.dart';
+import '../../domain/staff_reason_rule.dart';
+
+/// What staff chose in [showKitchenOrderCancelDialog].
+typedef KitchenOrderCancellation = ({
+  DineInCancellationReasonCode reasonCode,
+  String reasonMessage,
+});
 
 /// 2026-11-08 — the whole-order "Siparişi İptal Et" reason picker, shared by
-/// the KDS board card's footer and the KDS detail screen (previously a
-/// private dialog inside `KitchenOrderDetailsScreen`, dine-in only).
-/// Returns the chosen reason, or `null` when the user backs out.
-Future<DineInCancellationReasonCode?> showKitchenOrderCancelDialog(
+/// the KDS board card's footer, the KDS detail screen and the courier
+/// settlement. ADR-085 stage 6C-2: a written explanation of at least
+/// [minStaffReasonLength] characters is required too. Returns `null` when
+/// the user backs out.
+Future<KitchenOrderCancellation?> showKitchenOrderCancelDialog(
   BuildContext context, {
   required OrderChannel channel,
-}) async {
-  var selected = DineInCancellationReasonCode.itemUnavailable;
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setDialogState) => AlertDialog(
-        title: const Text('Siparişi İptal Et'),
-        content: RadioGroup<DineInCancellationReasonCode>(
-          groupValue: selected,
-          onChanged: (value) => setDialogState(() => selected = value!),
+}) =>
+    showDialog<KitchenOrderCancellation>(
+      context: context,
+      builder: (_) => _KitchenOrderCancelDialog(channel: channel),
+    );
+
+class _KitchenOrderCancelDialog extends StatefulWidget {
+  const _KitchenOrderCancelDialog({required this.channel});
+
+  final OrderChannel channel;
+
+  @override
+  State<_KitchenOrderCancelDialog> createState() =>
+      _KitchenOrderCancelDialogState();
+}
+
+class _KitchenOrderCancelDialogState extends State<_KitchenOrderCancelDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _message = TextEditingController();
+  var _selected = DineInCancellationReasonCode.itemUnavailable;
+
+  @override
+  void dispose() {
+    _message.dispose();
+    super.dispose();
+  }
+
+  void _confirm() {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    Navigator.of(context)
+        .pop((reasonCode: _selected, reasonMessage: _message.text.trim()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Siparişi İptal Et'),
+      content: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              for (final code in DineInCancellationReasonCode.values)
-                RadioListTile<DineInCancellationReasonCode>(
-                  value: code,
-                  title: Text(kitchenOrderCancellationReasonLabel(
-                    code,
-                    channel: channel,
-                  )),
+              RadioGroup<DineInCancellationReasonCode>(
+                groupValue: _selected,
+                onChanged: (value) =>
+                    setState(() => _selected = value ?? _selected),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final code in DineInCancellationReasonCode.values)
+                      RadioListTile<DineInCancellationReasonCode>(
+                        value: code,
+                        title: Text(kitchenOrderCancellationReasonLabel(
+                          code,
+                          channel: widget.channel,
+                        )),
+                      ),
+                  ],
                 ),
+              ),
+              TextFormField(
+                key: const Key('orderCancelReasonMessage'),
+                controller: _message,
+                maxLength: 500,
+                decoration: const InputDecoration(
+                  labelText: 'Açıklama (zorunlu)',
+                ),
+                validator: staffReasonError,
+              ),
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Vazgeç'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Siparişi İptal Et'),
-          ),
-        ],
       ),
-    ),
-  );
-  return confirmed == true ? selected : null;
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Vazgeç'),
+        ),
+        ElevatedButton(
+          key: const Key('orderCancelConfirm'),
+          onPressed: _confirm,
+          child: const Text('Siparişi İptal Et'),
+        ),
+      ],
+    );
+  }
 }
 
 /// Turkish label for a cancellation reason. [DineInCancellationReasonCode

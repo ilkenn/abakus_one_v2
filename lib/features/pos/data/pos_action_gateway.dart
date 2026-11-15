@@ -77,6 +77,21 @@ class AcceptedLineCancellationResult {
   final String? approvalRequestId;
 }
 
+/// ADR-085 stage 6C-2 — what `requestCheckFinancialAdjustment` actually
+/// did: a manager-tier caller's comp/discount is [applied] at once (no
+/// [approvalRequestId]); a lower role's waits for a manager's approval.
+class CheckFinancialAdjustmentResult {
+  const CheckFinancialAdjustmentResult({
+    required this.adjustmentId,
+    required this.applied,
+    this.approvalRequestId,
+  });
+
+  final String adjustmentId;
+  final bool applied;
+  final String? approvalRequestId;
+}
+
 abstract interface class PosActionGateway {
   // --- Line decisions (guestSession-mode orders only) ------------------
   Future<void> respondToOrderLines({
@@ -188,7 +203,7 @@ abstract interface class PosActionGateway {
     required String reasonMessage,
   });
 
-  Future<String> requestCheckFinancialAdjustment({
+  Future<CheckFinancialAdjustmentResult> requestCheckFinancialAdjustment({
     required PosDeviceContext ctx,
     required String checkId,
     required String scope,
@@ -491,7 +506,7 @@ class FirebasePosActionGateway implements PosActionGateway {
   }
 
   @override
-  Future<String> requestCheckFinancialAdjustment({
+  Future<CheckFinancialAdjustmentResult> requestCheckFinancialAdjustment({
     required PosDeviceContext ctx,
     required String checkId,
     required String scope,
@@ -517,7 +532,13 @@ class FirebasePosActionGateway implements PosActionGateway {
       'reasonCode': reasonCode,
       'reasonMessage': reasonMessage,
     });
-    return result['approvalRequestId'] as String;
+    // ADR-085 stage 6C-2 — a manager-tier caller's adjustment is applied at
+    // once (`applied: true`, no approval request).
+    return CheckFinancialAdjustmentResult(
+      adjustmentId: result['adjustmentId'] as String? ?? '',
+      applied: result['applied'] as bool? ?? false,
+      approvalRequestId: result['approvalRequestId'] as String?,
+    );
   }
 }
 
@@ -660,7 +681,7 @@ class UnavailablePosActionGateway implements PosActionGateway {
       _unavailable();
 
   @override
-  Future<String> requestCheckFinancialAdjustment({
+  Future<CheckFinancialAdjustmentResult> requestCheckFinancialAdjustment({
     required PosDeviceContext ctx,
     required String checkId,
     required String scope,

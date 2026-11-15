@@ -306,7 +306,7 @@ class _FakePosActionGateway implements PosActionGateway {
   Completer<void>? cancellationGate;
 
   @override
-  Future<String> requestCheckFinancialAdjustment({
+  Future<CheckFinancialAdjustmentResult> requestCheckFinancialAdjustment({
     required PosDeviceContext ctx,
     required String checkId,
     required String scope,
@@ -319,7 +319,10 @@ class _FakePosActionGateway implements PosActionGateway {
     required String reasonMessage,
   }) async {
     financialAdjustmentRequestCallCount += 1;
-    return 'approval-adjustment-1';
+    return const CheckFinancialAdjustmentResult(
+        adjustmentId: 'adjustment-1',
+        applied: false,
+        approvalRequestId: 'approval-adjustment-1');
   }
 }
 

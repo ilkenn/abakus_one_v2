@@ -573,7 +573,7 @@ test("staffCancel: pendingConfirmation is explicitly rejected — must use respo
   const orderId = await createTakeawayOrder(chain, productId, customer.idToken);
 
   const { httpStatus, body } = await callCallable(
-    CANCEL_STAFF_URL, { orderId, reasonCode: "other" }, staff.idToken,
+    CANCEL_STAFF_URL, { orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, staff.idToken,
   );
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
@@ -591,7 +591,7 @@ test("staffCancel: ordinary staff CAN cancel a confirmed order (manageTakeawayOr
   await callCallable(RESPOND_URL, { orderId, decision: "confirm" }, staff.idToken);
 
   const { httpStatus, body } = await callCallable(
-    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, staff.idToken,
+    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, staff.idToken,
   );
   assert.strictEqual(httpStatus, 200, JSON.stringify(body));
   assert.strictEqual(body.result?.status, "cancelled");
@@ -608,7 +608,7 @@ test("staffCancel: ordinary staff CANNOT cancel a preparing order — DENIED (§
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "preparing" }, staff.idToken);
 
   const { httpStatus, body } = await callCallable(
-    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, staff.idToken,
+    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, staff.idToken,
   );
   assert.strictEqual(httpStatus, 403);
   assert.strictEqual(body.error?.status, "PERMISSION_DENIED");
@@ -628,7 +628,7 @@ test("staffCancel: manager CAN cancel a preparing order (§16 scenario 5)", asyn
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "preparing" }, staff.idToken);
 
   const { httpStatus, body } = await callCallable(
-    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, manager.idToken,
+    CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, manager.idToken,
   );
   assert.strictEqual(httpStatus, 200, JSON.stringify(body));
   const order = await orderDoc(orderId);
@@ -647,7 +647,7 @@ test("staffCancel: manager CAN cancel a ready order too", async () => {
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "preparing" }, staff.idToken);
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "ready" }, staff.idToken);
 
-  const { httpStatus } = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "customerNoShow" }, manager.idToken);
+  const { httpStatus } = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "customerNoShow", reasonMessage: "Test iptal gerekçesi" }, manager.idToken);
   assert.strictEqual(httpStatus, 200);
 });
 
@@ -664,7 +664,7 @@ test("staffCancel: a completed order cannot be cancelled", async () => {
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "ready" }, staff.idToken);
   await callCallable(ADVANCE_URL, { orderId, targetStatus: "completed" }, staff.idToken);
 
-  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "other" }, manager.idToken);
+  const { httpStatus, body } = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "other", reasonMessage: "Test iptal gerekçesi" }, manager.idToken);
   assert.strictEqual(httpStatus, 400);
   assert.strictEqual(body.error?.status, "FAILED_PRECONDITION");
 });
@@ -741,7 +741,7 @@ test("chain 3: staff confirms then cancels while confirmed, with a Boncuk redemp
   const orderId = await createTakeawayOrder(chain, productId, customer.idToken, { requestedBoncukAmount: 50 });
 
   await callCallable(RESPOND_URL, { orderId, decision: "confirm" }, staff.idToken);
-  const cancel = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, staff.idToken);
+  const cancel = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, staff.idToken);
   assert.strictEqual(cancel.httpStatus, 200, JSON.stringify(cancel.body));
 
   const account = await waitFor(async () => {
@@ -845,7 +845,7 @@ test("concurrency: ready -> completed vs manager cancellation — exactly one wi
 
   const [completeResult, cancelResult] = await Promise.all([
     callCallable(ADVANCE_URL, { orderId, targetStatus: "completed" }, staff.idToken),
-    callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, manager.idToken),
+    callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, manager.idToken),
   ]);
 
   const successes = [completeResult, cancelResult].filter((r) => r.httpStatus === 200 && r.body.result?.duplicate === false);

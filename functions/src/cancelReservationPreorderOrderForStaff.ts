@@ -3,10 +3,11 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import { shouldEnforceAppCheck } from "./appCheckConfig";
 import { requireReservationManagerPermission } from "./reservationAuthorization";
 import { canTransition, type OrderStatus } from "./orderStatus";
+import { holdsPermission } from "./staffScope";
+import { oversightActorOf, orderNumberOf, orderTotalMinorUnitsOf, recordManagerAction, requireStaffReason } from "./managerOversight";
 import {
   requireReservationPreorderOrderId,
   sanitizeReservationPreorderCancellationReasonCode,
-  sanitizeOptionalReasonMessage,
   applyReservationPreorderOrderLifecycleTransition,
   writeReservationPreorderOrderStatusChangeAuditEvent,
 } from "./reservationPreorderOrderLifecycle";
@@ -58,7 +59,8 @@ export const cancelReservationPreorderOrderForStaff = onCall(
     const data = (request.data ?? {}) as Record<string, unknown>;
     const orderId = requireReservationPreorderOrderId(data.orderId);
     const reasonCode = sanitizeReservationPreorderCancellationReasonCode(data.reasonCode);
-    const reasonMessage = sanitizeOptionalReasonMessage(data.reasonMessage);
+    // ADR-085 stage 6C-2 — a written reason (at least 5 characters) is required.
+    const reasonMessage = requireStaffReason(data.reasonMessage);
 
     const db = getFirestore();
     const orderRef = db.collection("orders").doc(orderId);
@@ -139,6 +141,14 @@ export const cancelReservationPreorderOrderForStaff = onCall(
         reasonMessage,
         now,
       });
+      // ADR-085 stage 6C-2 — a branch manager's own cancellation is seen by admin/owner.
+      if (await holdsPermission(request, organizationId, "approveAcceptedLineCancellation")) {
+        recordManagerAction(tx, db, await oversightActorOf(request, organizationId), {
+          alertId: `orderCancel-${orderId}`, organizationId, branchId: String(order.branchId), type: "managerOrderCancellation",
+          targetRef: orderRef.path, orderId, orderNumber: orderNumberOf(order), amountMinorUnits: orderTotalMinorUnitsOf(order),
+          detail: reasonCode, reason: reasonMessage, now,
+        });
+      }
 
       return { orderId, status: "cancelled", duplicate: false };
     });

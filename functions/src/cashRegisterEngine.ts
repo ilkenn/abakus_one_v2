@@ -13,6 +13,9 @@ import { BRANCH_PAYMENT_CONFIG_COLLECTION, PAYMENT_ATTEMPTS_COLLECTION, type Bra
 import { COURIER_SETTLEMENTS_COLLECTION, DELIVERY_COLLECTIONS_COLLECTION, type CourierSettlementDoc, type DeliveryCollectionDoc } from "./courierSettlement";
 import { DELIVERY_PAYMENT_METHOD_CATALOG } from "./deliveryPaymentMethodCatalog";
 import { CHECK_FINANCIAL_ADJUSTMENTS_COLLECTION } from "./checkAllocationConfig";
+import { holdsPermission } from "./staffScope";
+import { oversightActorOf, recordManagerAction, requireStaffReason } from "./managerOversight";
+import type { Transaction, DocumentReference } from "firebase-admin/firestore";
 import {
   CASH_DRAWERS_COLLECTION,
   CASH_SESSIONS_COLLECTION,
@@ -557,6 +560,11 @@ export const submitCashCount = onCall({ enforceAppCheck: shouldEnforceAppCheck()
   const sessionId = requireNonEmptyString(data.sessionId, "sessionId");
   const actualAmountMinorUnits = requireNonNegativeInt(data.actualAmountMinorUnits, "actualAmountMinorUnits");
   const notes = sanitizeNotes(data.notes);
+  // ADR-085 stage 6C-2 — a manager-tier user's own count is accepted at
+  // once (it could never approve its own request); a cashier's count still
+  // waits for a manager.
+  const managerDirect = await holdsPermission(request, organizationId, "approveCashReconciliation");
+  const actor = managerDirect ? await oversightActorOf(request, organizationId) : null;
 
   const db = getFirestore();
   const countId = db.collection(CASH_COUNTS_COLLECTION).doc().id;
@@ -582,11 +590,33 @@ export const submitCashCount = onCall({ enforceAppCheck: shouldEnforceAppCheck()
     const now = Timestamp.now();
     const variance = computeCashVariance(expectedAmountMinorUnits, actualAmountMinorUnits);
     const countRef = db.collection(CASH_COUNTS_COLLECTION).doc(countId);
+    if (managerDirect && variance.type !== "exact") requireStaffReason(notes, "notes");
     const count: CashCountDoc = {
       organizationId, branchId, sessionId, expectedAmountMinorUnits, actualAmountMinorUnits, notes, variance,
       declaredByStaffUid: uid, declaredAt: now,
     };
     tx.set(countRef, count);
+
+    if (managerDirect) {
+      const reconciliationId = acceptCashCount(tx, db, {
+        session, sessionRef, countId, count, reviewerUid: uid, comments: notes, now, approvalMode: "managerDirect",
+      });
+      writeAuditEvent({
+        tx, db, eventId: `${countId}-managerDirect`, organizationId, branchId,
+        type: "cashCount.acceptedByManagerDirect", targetRef: countRef.path,
+        newValue: { sessionId, expectedAmountMinorUnits, actualAmountMinorUnits, variance, reconciliationId },
+        actorType: "staff", actorUid: uid, reasonMessage: notes.length > 0 ? notes : null,
+        correlationId: generateCorrelationId(), clientRequestId: sanitizeClientRequestId(data.clientRequestId), now,
+      });
+      if (variance.type !== "exact") {
+        recordManagerAction(tx, db, actor!, {
+          alertId: `cashVariance-${countId}`, organizationId, branchId, type: "managerCashVariance",
+          targetRef: countRef.path, amountMinorUnits: variance.amountMinorUnits, detail: variance.type,
+          reason: notes, now,
+        });
+      }
+      return { countId, expectedAmountMinorUnits, variance, sessionVersionAfter: session.version + 1, accepted: true as const };
+    }
 
     const nextVersion = session.version + 1;
     tx.update(sessionRef, { status: "pendingApproval", updatedAt: now, version: nextVersion });
@@ -597,8 +627,15 @@ export const submitCashCount = onCall({ enforceAppCheck: shouldEnforceAppCheck()
       actorType: "staff", actorUid: uid,
       correlationId: generateCorrelationId(), clientRequestId: sanitizeClientRequestId(data.clientRequestId), now,
     });
-    return { countId, expectedAmountMinorUnits, variance, sessionVersionAfter: nextVersion };
+    return { countId, expectedAmountMinorUnits, variance, sessionVersionAfter: nextVersion, accepted: false as const };
   });
+
+  if (result.accepted) {
+    return {
+      countId: result.countId, expectedAmountMinorUnits: result.expectedAmountMinorUnits,
+      variance: result.variance, status: "approved" as const, approvalRequestId: null,
+    };
+  }
 
   const approval = await createApprovalRequest({
     organizationId, branchId, actionType: "cashReconciliation", requestedByActorUid: uid,
@@ -633,11 +670,35 @@ export async function applyCashReconciliationApproved(params: ActionHandlerParam
   const countDoc = countsSnap.docs[0];
   const count = countDoc.data() as CashCountDoc;
 
+  const reconciliationId = acceptCashCount(tx, db, {
+    session, sessionRef, countId: countDoc.id, count, reviewerUid: respondedByActorUid, comments: "", now,
+    approvalMode: "remoteApproval",
+  });
+  return { newValue: { status: "approved", reconciliationId } };
+}
+
+/**
+ * Accepting a count (whatever its difference) — shared by the manager's
+ * approval and (ADR-085 stage 6C-2) a manager's own count. Writes only:
+ * the approved reconciliation, a `closingDifference` movement for a
+ * difference, and the session -> `approved`. Returns the reconciliation id.
+ */
+function acceptCashCount(tx: Transaction, db: Firestore, params: {
+  session: CashSessionDoc;
+  sessionRef: DocumentReference;
+  countId: string;
+  count: CashCountDoc;
+  reviewerUid: string;
+  comments: string;
+  now: Timestamp;
+  approvalMode: "remoteApproval" | "managerDirect";
+}): string {
+  const { session, sessionRef, countId, count, reviewerUid, comments, now, approvalMode } = params;
   const reconciliationRef = db.collection(CASH_RECONCILIATIONS_COLLECTION).doc();
   const reconciliation: CashReconciliationDoc = {
     organizationId: session.organizationId, branchId: session.branchId, sessionId: sessionRef.id,
-    cashCountId: countDoc.id, status: "approved", reviewedByStaffUid: respondedByActorUid, reviewedAt: now,
-    managerComments: "", varianceAccepted: true, variance: count.variance,
+    cashCountId: countId, status: "approved", reviewedByStaffUid: reviewerUid, reviewedAt: now,
+    managerComments: comments, varianceAccepted: true, variance: count.variance, approvalMode,
   };
   tx.set(reconciliationRef, reconciliation);
 
@@ -648,17 +709,17 @@ export async function applyCashReconciliationApproved(params: ActionHandlerParam
       organizationId: session.organizationId, branchId: session.branchId, sessionId: sessionRef.id, drawerId: session.drawerId,
       type: "closingDifference", amountMinorUnits: signedDiff, currencyCode: session.currencyCode,
       reason: `Cash count variance accepted (${count.variance.type}, ${count.variance.amountMinorUnits} minor units).`,
-      actorStaffUid: respondedByActorUid, timestamp: now, reversalOfMovementId: null, paymentAttemptId: null, refundRequestId: null,
+      actorStaffUid: reviewerUid, timestamp: now, reversalOfMovementId: null, paymentAttemptId: null, refundRequestId: null,
     };
     tx.set(db.collection(CASH_MOVEMENTS_COLLECTION).doc(), movement);
     settledAmountMinorUnits += signedDiff;
   }
 
   tx.update(sessionRef, {
-    status: "approved", settledAmountMinorUnits, finalCashCountId: countDoc.id, finalReconciliationId: reconciliationRef.id,
+    status: "approved", settledAmountMinorUnits, finalCashCountId: countId, finalReconciliationId: reconciliationRef.id,
     updatedAt: now, version: session.version + 1,
   });
-  return { newValue: { status: "approved", reconciliationId: reconciliationRef.id } };
+  return reconciliationRef.id;
 }
 
 /** The allowlisted `cashReconciliation` reject handler — BR-CASH-005: the session returns to a recountable state, never a dead end. */
@@ -959,10 +1020,33 @@ export const getDailyRevenueSummary = onCall({ enforceAppCheck: shouldEnforceApp
     if (typeof amount === "number") complimentaryMinorUnits += amount;
   }
 
+  // ADR-085 stage 6C-2 — the accepted cash count difference and its
+  // written reason, for the Z report (null until a count is accepted).
+  let cashCountDifference: {
+    type: "over" | "short"; amountMinorUnits: number; reason: string; acceptedByManagerDirect: boolean;
+  } | null = null;
+  if (session.finalCashCountId && session.finalReconciliationId) {
+    const [countSnap, reconciliationSnap] = await db.getAll(
+      db.collection(CASH_COUNTS_COLLECTION).doc(session.finalCashCountId),
+      db.collection(CASH_RECONCILIATIONS_COLLECTION).doc(session.finalReconciliationId),
+    );
+    const count = countSnap.data() as CashCountDoc | undefined;
+    const reconciliation = reconciliationSnap.data() as CashReconciliationDoc | undefined;
+    if (count && count.variance.type !== "exact") {
+      cashCountDifference = {
+        type: count.variance.type,
+        amountMinorUnits: count.variance.amountMinorUnits,
+        reason: reconciliation?.managerComments || count.notes,
+        acceptedByManagerDirect: reconciliation?.approvalMode === "managerDirect",
+      };
+    }
+  }
+
   return {
     sessionId,
     currencyCode: session.currencyCode,
     ...totals,
     complimentaryMinorUnits,
+    cashCountDifference,
   };
 });

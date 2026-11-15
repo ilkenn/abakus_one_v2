@@ -92,6 +92,13 @@ abstract final class EscPosZReportEncoder {
     writeTwoColumn('Kasa Farkı (${content.varianceLabel})',
         _fmt(content, content.varianceAmountMinorUnits),
         bold: content.varianceType != 'exact');
+    // ADR-085 stage 6C-2 — the accepted difference's written reason.
+    final varianceReason = content.varianceReason;
+    if (content.varianceType != 'exact' &&
+        varianceReason != null &&
+        varianceReason.isNotEmpty) {
+      writeLine('Fark Gerekçesi: $varianceReason');
+    }
     writeLine('=' * _lineWidth);
 
     writeLine('');

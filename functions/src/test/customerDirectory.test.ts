@@ -314,7 +314,7 @@ test("setTenantCustomerRestriction: a plain staff member (below manager) cannot 
   const customer = await registerCustomer(organizationId);
 
   const res = await callCallable(SET_TENANT_RESTRICTION_URL, {
-    organizationId, customerId: customer.uid, status: "active", reasonCode: "x", reasonMessage: "y",
+    organizationId, customerId: customer.uid, status: "active", reasonCode: "x", reasonMessage: "Test gerekçesi y",
   }, staff.idToken);
   assert.strictEqual(res.httpStatus, 403, JSON.stringify(res.body));
 });
@@ -326,10 +326,10 @@ test("setPlatformCustomerRestriction: requires the separate platform capability 
   const platformOwner = await seedPlatformOwner();
   const customer = await registerCustomer(organizationId);
 
-  const denied = await callCallable(SET_PLATFORM_RESTRICTION_URL, { uid: customer.uid, status: "active", reasonCode: "x", reasonMessage: "y" }, manager.idToken);
+  const denied = await callCallable(SET_PLATFORM_RESTRICTION_URL, { uid: customer.uid, status: "active", reasonCode: "x", reasonMessage: "Test gerekçesi y" }, manager.idToken);
   assert.strictEqual(denied.httpStatus, 403, JSON.stringify(denied.body));
 
-  const allowed = await callCallable(SET_PLATFORM_RESTRICTION_URL, { uid: customer.uid, status: "active", reasonCode: "fraudSuspected", reasonMessage: "z" }, platformOwner.idToken);
+  const allowed = await callCallable(SET_PLATFORM_RESTRICTION_URL, { uid: customer.uid, status: "active", reasonCode: "fraudSuspected", reasonMessage: "Test gerekçesi z" }, platformOwner.idToken);
   assert.strictEqual(allowed.httpStatus, 200, JSON.stringify(allowed.body));
   const restriction = await db().collection("platformCustomerRestrictions").doc(customer.uid).get();
   assert.strictEqual(restriction.data()!.status, "active");

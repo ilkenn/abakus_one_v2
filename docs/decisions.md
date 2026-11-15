@@ -21667,3 +21667,27 @@ owner):**
   courier this happens at the counter ("Teslim Et") before it may depart.
 - **No day end** while courier packages, cancellation requests or payment-method changes of the branch are
   still open.
+
+**Update 2026-11-15 — stage 6C-2, manager authority and the "zero hidden action" shield (product owner approved):**
+
+- **Every cancellation and comp carries a written reason** of at least 5 characters (server-enforced,
+  `reason/too-short`).
+- **A manager-tier user's own comp/discount, line or order cancellation and cash count apply at once.** It could
+  never approve its own request (self-approval is forbidden), so routing it to approval only blocked the floor.
+  Instead each one is:
+  - recorded with `approvalMode: managerDirect` and an audit event;
+  - for a branch manager, also recorded as an immutable `oversightAlerts` entry pushed to admin/owner only and
+    listed in "Müdür İşlemleri".
+
+  An admin/owner's own action is not alerted (they are the audience). Staff requests still go to manager
+  approval.
+- **A manager's cash count difference** is accepted with its written reason, which the Z report prints.
+- **The branch manager holds `manageFiscalDevices`** for its own branches (the fiscal day end included).
+- **History is server-written only:** rules tests pin that a manager can delete, rewrite or forge none of the
+  order, cancellation, comp, payment, cash, Z, fiscal, audit or alert records.
+- **Already true, recorded here:**
+  - the manager cannot suspend staff, approve the staff it added, or record courier payments;
+  - the client-side admin-only `voidPayment`/`correctPayment` are in-memory only and were left as they are;
+  - there is no IBAN setting. If one is added, it is admin/owner only.
+- **Open (not decided here):** a staff member can still cancel a whole dine-in order directly; whether that
+  should go through manager approval is a separate product decision.

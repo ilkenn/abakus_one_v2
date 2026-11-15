@@ -1044,7 +1044,7 @@ test("27. end-to-end: staff cancels a confirmed delivery order with a campaign r
   const orderId = submit.body.result!.orderId as string;
   await callCallable(RESPOND_URL, { orderId, decision: "confirm" }, staff.idToken);
 
-  const cancel = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue" }, staff.idToken);
+  const cancel = await callCallable(CANCEL_STAFF_URL, { orderId, reasonCode: "operationalIssue", reasonMessage: "Test iptal gerekçesi" }, staff.idToken);
   assert.strictEqual(cancel.httpStatus, 200, JSON.stringify(cancel.body));
 
   const counter = await waitFor(async () => {

@@ -492,7 +492,8 @@ class _KitchenDisplayBoardScreenState
       ).cancel(
         orderId: ticket.orderId.value,
         channel: ticket.header.channel,
-        reasonCode: reason,
+        reasonCode: reason.reasonCode,
+        reasonMessage: reason.reasonMessage,
       );
       if (!mounted) return;
       setState(() => _message = null);

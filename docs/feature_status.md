@@ -12154,6 +12154,11 @@ Stage 5 follow-ups (2026-11-15, product owner request):
   `mark_courier_earnings_paid`, `calculate_delivery_earnings`, `calculate_shift_hourly_earnings`,
   `schedule_courier_shift`), `shift_earnings_window_calculator.dart`, their six test files, and the
   "Ücretlendirme" button on the dispatch board.
+- Tests: `courierPayPure.test.ts` (6), `courierPay.test.ts` (4 emulator: form rate and pool rule,
+  versions/back-dating/branch scope, the whole shift flow with earnings visibility, pool couriers),
+  `courierSettlement.test.ts` (package lines at the rate in force; none without a profile),
+  `courier_pay_models_test.dart`, `courier_pay_screens_test.dart`, `staff_management_screen_test.dart`
+  (pay in the add/edit form).
 
 ### Stage 6A — courier invoices, payments and date-range reports (2026-11-15) — Visual Review Bekleniyor
 
@@ -12271,8 +12276,69 @@ Product owner approved the data model, the Storage/Firestore rules and the 6A �
   - app: `courier_alerts_screen_test.dart` (4), new cases in `courier_work_screen_test.dart` and
     `delivery_dispatch_planned_courier_test.dart`; the role-menu test now pins "Kurye Uyarıları" for the
     cashier and the packing lead.
-- Tests: `courierPayPure.test.ts` (6), `courierPay.test.ts` (4 emulator: form rate and pool rule,
-  versions/back-dating/branch scope, the whole shift flow with earnings visibility, pool couriers),
-  `courierSettlement.test.ts` (package lines at the rate in force; none without a profile),
-  `courier_pay_models_test.dart`, `courier_pay_screens_test.dart`, `staff_management_screen_test.dart`
-  (pay in the add/edit form).
+
+### Stage 6C-2 — manager authority and the "zero hidden action" shield (2026-11-15) — Visual Review Bekleniyor
+
+- **Written reason, at least 5 characters, for every staff cancellation and comp** (`requireStaffReason`,
+  `functions/src/managerOversight.ts`; the same rule in the app, `lib/features/pos/domain/staff_reason_rule.dart`).
+  - It covers the delivery, takeaway, reservation pre-order and dine-in whole-order cancellations, the dine-in
+    line cancellation and the comp/discount request.
+  - A refusal carries the details code `reason/too-short`.
+  - The KDS / courier settlement "Siparişi İptal Et" dialog now has a required "Açıklama" field; the table
+    screen's line cancellation and price correction dialogs say so under the field.
+- **The manager acts at once, but never unseen.**
+  - A manager-tier user's own comp/discount (`requestCheckFinancialAdjustment`) is applied immediately
+    (`approvalMode: managerDirect`, audit `checkFinancialAdjustment.appliedByManagerDirect`). The screen reports
+    "Fiyat düzeltmesi uygulandı." or "...yönetici onayına gönderildi.".
+  - A manager's line cancellation (already direct since ADR-066) and order cancellation now also write a
+    manager-action alert.
+  - A staff member's comp and line cancellation still wait for a manager; the order cancellation permission
+    tiers are unchanged.
+- **Cash count.**
+  - A manager-tier user's own count (`submitCashCount`) is accepted at once: approved reconciliation
+    (`approvalMode: managerDirect`, the reason in `managerComments`), the `closingDifference` movement and the
+    session -> `approved`.
+  - A difference needs the written reason. The Gün Sonu screen asks for "Fark Açıklaması (zorunlu)" when the
+    preview shows one, and no longer sends a stock note.
+  - The Z summary (`getDailyRevenueSummary.cashCountDifference`) and the printed/preview Z report show the
+    difference's reason ("Fark Gerekçesi").
+  - A cashier's count still goes to manager approval.
+- **Manager-action alerts** (`oversightAlerts`, server-written, deterministic ids):
+  - kinds: `managerComp`, `managerLineCancellation`, `managerOrderCancellation`, `managerCashVariance`;
+  - pushed only to the organization's admin/owner (`onOversightAlertCreatedNotify`);
+  - listed in the new panel screen "Müdür İşlemleri" (admin/owner only; `listOversightAlerts`), where
+    "Görüldü" (`acknowledgeOversightAlert`) is the only change anyone can make;
+  - an admin/owner's own action opens none, since they are the audience, but keeps its audit event.
+- **Fiscal**: the manager role now holds `manageFiscalDevices` — `recordFiscalOperation` (incl. the fiscal
+  `dayEnd`), offline leases, for its own branch only (branch access and a trusted-device session are still
+  checked).
+- **Shield (Firestore rules tests)**: a branch manager with full claims cannot delete, rewrite or forge any of
+  these records:
+  - orders, line cancellations, courier cancellation requests and comps;
+  - payment attempts, refunds, payment changes, delivery collections and courier settlements;
+  - cash sessions, movements, counts and reconciliations;
+  - the fiscal journal (Z), audit events, approval requests and the manager-action alerts.
+
+  The manager cannot read the alerts either.
+- Tests:
+  - server, `checkFinancialAdjustments.test.ts` (+4): manager comp direct with audit and alert; admin direct
+    without an alert; staff waits; short reason; line cancellation alert; push recipients admin/owner only;
+    list/acknowledge denied to the manager;
+  - server, other files: `cashRegisterEngine.test.ts` (+2: manager short count needs a reason and is
+    accepted/alerted/shown on Z; exact count; cashier still pending), `deliveryOrderLifecycle.test.ts` (+2:
+    short reason refused; manager alert, none for staff/admin), `fiscalEngine.test.ts` (+1: manager day end in
+    its own branch, not another branch's);
+  - rules: `firestore-tests/rules.test.js` (+4 shield tests);
+  - app: `kitchen_order_cancel_dialog_test.dart` (4), `manager_actions_screen_test.dart` (5), and 4 new cases in
+    `end_of_day_screen_test.dart`;
+  - updated deliberately:
+    - every existing staff cancellation and comp call in the tests now sends a reason of at least 5 characters;
+    - `cashOperationalView.test.ts` expects an admin's own count to be `approved`;
+    - the courier direct-cancel check in `courierDeliveryControls.test.ts` sends a reason so it still proves the
+      403;
+    - the ADR-066 "admin1 cancels directly" test now uses an admin with branch access. The bootstrap admin has
+      none, so that test was failing before this stage too.
+- **Known, not changed here**:
+  - staff (`manageDineInOrders`) can still cancel a whole dine-in order directly (now with a written reason; no
+    manager approval). Moving it behind approval is a separate decision.
+  - No IBAN setting exists. If one is added, it must be admin/owner only (ADR-085 6C-2).

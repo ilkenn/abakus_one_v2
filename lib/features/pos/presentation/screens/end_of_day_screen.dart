@@ -14,6 +14,7 @@ import '../../data/cash_register_gateway.dart';
 import '../../data/pos_operational_view_gateway.dart';
 import '../../data/z_report_printer_adapter.dart';
 import '../../domain/cash/z_report_content.dart';
+import '../../domain/staff_reason_rule.dart';
 import '../providers/pos_workspace_providers.dart';
 import '../widgets/pos_operational_rail.dart';
 
@@ -141,7 +142,8 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
     return (type: diff < 0 ? 'short' : 'over', amountMinorUnits: diff.abs());
   }
 
-  Future<void> _submitCountAndClose(int actualAmountMinorUnits) async {
+  Future<void> _submitCountAndClose(
+      int actualAmountMinorUnits, String varianceReason) async {
     final ctx = ref.read(posDeviceContextProvider);
     final session = _session;
     if (ctx == null || session?.sessionId == null) return;
@@ -155,7 +157,10 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
                 ctx: ctx,
                 sessionId: session!.sessionId!,
                 actualAmountMinorUnits: actualAmountMinorUnits,
-                notes: 'Gün Sonu sayımı.',
+                // ADR-085 stage 6C-2 — the written reason for a difference
+                // (empty for an exact count); never a stock phrase, so the
+                // server's "a difference needs a reason" rule stays real.
+                notes: varianceReason,
               );
       final refreshed = await ref
           .read(cashRegisterGatewayProvider)
@@ -207,6 +212,7 @@ class _EndOfDayScreenState extends ConsumerState<EndOfDayScreen> {
         actualAmountMinorUnits: actualAmountMinorUnits,
         varianceType: countResult.varianceType,
         varianceAmountMinorUnits: countResult.varianceAmountMinorUnits,
+        varianceReason: varianceReason.isEmpty ? null : varianceReason,
       );
       final printerSettings =
           await ref.read(receiptPrinterSettingsProvider.future);
@@ -382,7 +388,8 @@ class _ReadyView extends StatefulWidget {
   final CashCountResult? countResult;
   final Money Function(int) currencyOf;
   final ({String type, int amountMinorUnits}) Function(int) previewVariance;
-  final Future<void> Function(int actualAmountMinorUnits) onSubmit;
+  final Future<void> Function(int actualAmountMinorUnits, String reason)
+      onSubmit;
 
   @override
   State<_ReadyView> createState() => _ReadyViewState();
@@ -390,12 +397,23 @@ class _ReadyView extends StatefulWidget {
 
 class _ReadyViewState extends State<_ReadyView> {
   final _controller = TextEditingController();
+  final _reasonController = TextEditingController();
   int? _typedMinorUnits;
 
   @override
   void dispose() {
     _controller.dispose();
+    _reasonController.dispose();
     super.dispose();
+  }
+
+  /// ADR-085 stage 6C-2 — a difference needs a written reason (at least
+  /// [minStaffReasonLength] characters) before the count can be sent.
+  bool get _reasonMissing {
+    final typed = _typedMinorUnits;
+    if (typed == null) return false;
+    if (widget.previewVariance(typed).type == 'exact') return false;
+    return staffReasonError(_reasonController.text) != null;
   }
 
   String _varianceLabel(String type) => switch (type) {
@@ -455,6 +473,21 @@ class _ReadyViewState extends State<_ReadyView> {
                     value: widget.currencyOf(revenue.totalMinorUnits),
                     bold: true,
                   ),
+                  if (revenue.cashCountDifference
+                      case final CashCountDifference difference) ...[
+                    const Divider(),
+                    _RevenueRow(
+                      label: difference.acceptedByManagerDirect
+                          ? 'Kasa Farkı (Müdür kabul etti)'
+                          : 'Kasa Farkı (onaylandı)',
+                      value: widget.currencyOf(difference.type == 'short'
+                          ? -difference.amountMinorUnits
+                          : difference.amountMinorUnits),
+                      color: AppColors.error,
+                    ),
+                    Text('Gerekçe: ${difference.reason}',
+                        style: AppTypography.bodySmall),
+                  ],
                   if (revenue.complimentaryMinorUnits != 0) ...[
                     const Divider(),
                     _RevenueRow(
@@ -514,6 +547,23 @@ class _ReadyViewState extends State<_ReadyView> {
                 fontWeight: FontWeight.bold,
               ),
             ),
+            if (preview.type != 'exact') ...[
+              const SizedBox(height: AppSpacing.sm),
+              TextField(
+                key: const Key('varianceReasonField'),
+                controller: _reasonController,
+                maxLength: 500,
+                decoration: InputDecoration(
+                  labelText: 'Fark Açıklaması (zorunlu)',
+                  helperText: 'Z raporunda görünür.',
+                  border: const OutlineInputBorder(),
+                  errorText: _reasonController.text.isNotEmpty && _reasonMissing
+                      ? staffReasonError(_reasonController.text)
+                      : null,
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ],
           ],
           if (widget.countResult != null) ...[
             const SizedBox(height: AppSpacing.md),
@@ -550,9 +600,16 @@ class _ReadyViewState extends State<_ReadyView> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: widget.busy || _typedMinorUnits == null
-                  ? null
-                  : () => widget.onSubmit(_typedMinorUnits!),
+              onPressed:
+                  widget.busy || _typedMinorUnits == null || _reasonMissing
+                      ? null
+                      : () => widget.onSubmit(
+                            _typedMinorUnits!,
+                            widget.previewVariance(_typedMinorUnits!).type ==
+                                    'exact'
+                                ? ''
+                                : _reasonController.text.trim(),
+                          ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: AppColors.onPrimary,

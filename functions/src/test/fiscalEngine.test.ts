@@ -210,3 +210,22 @@ test("revokeOfflineLease: a manager can revoke, idempotently, and the revocation
   assert.strictEqual(leaseDoc.data()!.revoked, true);
   assert.strictEqual(leaseDoc.data()!.revokedReason, "Cihaz kayboldu.");
 });
+
+// ADR-085 stage 6C-2 — the branch manager runs its own branch's fiscal
+// device, including the fiscal day end; another branch stays closed to it.
+test("recordFiscalOperation (6C-2): a manager records the fiscal day end for its own branch; a manager of another branch cannot", async () => {
+  const f = await setupFixture();
+  const dayEnd = await callCallable(RECORD_FISCAL_OPERATION_URL, {
+    ...ctx(f), operationType: "dayEnd", amountMinorUnits: 125000, currencyCode: "TRY", idempotencyKey: nextId("fisc"),
+  }, f.manager.idToken);
+  assert.strictEqual(dayEnd.httpStatus, 200, JSON.stringify(dayEnd.body));
+  assert.strictEqual(dayEnd.body.result?.status, "succeeded");
+
+  const otherBranchId = nextId("branch");
+  await db().collection("branches").doc(otherBranchId).set({ restaurantId: f.restaurantId, organizationId: f.organizationId, name: "Diğer", status: "active", emergencyStopped: false });
+  const outsider = await newStaffMember(f.organizationId, otherBranchId, f.admin1.idToken, "manager");
+  const denied = await callCallable(RECORD_FISCAL_OPERATION_URL, {
+    ...ctx(f), operationType: "dayEnd", amountMinorUnits: 125000, currencyCode: "TRY", idempotencyKey: nextId("fisc"),
+  }, outsider.idToken);
+  assert.strictEqual(denied.httpStatus, 403, JSON.stringify(denied.body));
+});
