@@ -12135,9 +12135,25 @@ Stage 5 details (data model approved 2026-11-15):
   - pay is keyed by the courier's sign-in account: a courier record with no linked account earns no
     package lines;
   - a package settled before a rate existed is not paid later (no back-dating, by decision);
-  - a manager cannot close a shift the courier forgot to end — the courier must press "Vardiya Bitir";
-  - the old in-memory compensation screens (`manager_courier_compensation_screen.dart` and its
-    repositories) are untouched and unused by this flow.
+  - the old in-memory compensation repositories, domain models and earnings summary are still used by
+    the hidden dispatch dashboard and its daily report, so they stay.
+
+Stage 5 follow-ups (2026-11-15, product owner request):
+
+- **POS device check.** "Yola Çıktım" on an order paid at the door by card (bank card or meal card)
+  first opens "POS Cihazı Kontrolü": "Bu sipariş KAPIDA POS ile ödenecektir" and a "POS cihazını yanıma
+  aldım" box. "POS'u Aldım, Yola Çık" stays disabled until it is ticked; "Vazgeç" does not depart. Cash
+  orders depart at once. App-side confirmation only; the server does not record it.
+- **Manager ends a forgotten shift.** "Vardiya Onayları" → a running shift → "Vardiyayı Sonlandır": end
+  day and time (after the start, not in the future, at most 24 hours) and a reason, both required.
+  Server: `reviewCourierShift` with `decision: "close"`. The shift closes as if the end had been approved
+  (`closedByManager: true`, no pressed end time), the earning line is written, and the audit event is
+  `courierShift.closedByManager`.
+- **Old pay screens removed** (approved): `manager_courier_compensation_screen.dart`, the use cases only
+  it or nothing used (`create_courier_compensation_profile`, `create_courier_earnings_adjustment`,
+  `mark_courier_earnings_paid`, `calculate_delivery_earnings`, `calculate_shift_hourly_earnings`,
+  `schedule_courier_shift`), `shift_earnings_window_calculator.dart`, their six test files, and the
+  "Ücretlendirme" button on the dispatch board.
 - Tests: `courierPayPure.test.ts` (6), `courierPay.test.ts` (4 emulator: form rate and pool rule,
   versions/back-dating/branch scope, the whole shift flow with earnings visibility, pool couriers),
   `courierSettlement.test.ts` (package lines at the rate in force; none without a profile),

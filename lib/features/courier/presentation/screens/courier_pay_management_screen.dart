@@ -17,7 +17,8 @@ import '../widgets/courier_earnings_tab.dart';
 /// admin, owner). **Vardiya Onayları**: the shifts couriers started or
 /// ended, to approve, correct (with a reason) or — for a start — reject.
 /// **Kazançlar**: each courier's earnings for today, this week or this
-/// month. The server limits both to the caller's branches (a manager) or
+/// month. A running shift the courier forgot to end can be ended here
+/// ("Vardiyayı Sonlandır": end time + reason). The server limits both to the caller's branches (a manager) or
 /// the whole organization (an admin/owner).
 class CourierPayManagementScreen extends StatelessWidget {
   const CourierPayManagementScreen({super.key, required this.organizationId});
@@ -107,6 +108,36 @@ class _ShiftApprovalsTabState extends ConsumerState<_ShiftApprovalsTab> {
         success: '${shift.courierName}: saat düzeltilerek onaylandı.');
   }
 
+  /// "Vardiyayı Sonlandır" — the courier forgot "Vardiya Bitir".
+  Future<void> _close(CourierShift shift) async {
+    final result = await showDialog<({DateTime time, String reason})>(
+      context: context,
+      builder: (_) => _CloseShiftDialog(shift: shift),
+    );
+    if (result == null || !mounted || _busyShiftId != null) return;
+    setState(() => _busyShiftId = shift.shiftId);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(courierPayGatewayProvider).closeShift(
+            organizationId: widget.organizationId,
+            shiftId: shift.shiftId,
+            endedAt: result.time,
+            reason: result.reason,
+          );
+      messenger.showSnackBar(SnackBar(
+          content: Text('${shift.courierName}: vardiya sonlandırıldı.')));
+      ref.invalidate(openCourierShiftsProvider(widget.organizationId));
+      ref.invalidate(courierEarningsReportProvider);
+    } on CourierPayException catch (error) {
+      messenger.showSnackBar(SnackBar(
+        content: Text(error.message),
+        backgroundColor: AppColors.error,
+      ));
+    } finally {
+      if (mounted) setState(() => _busyShiftId = null);
+    }
+  }
+
   Future<void> _reject(CourierShift shift) async {
     final reason = await showDialog<String>(
       context: context,
@@ -175,7 +206,12 @@ class _ShiftApprovalsTabState extends ConsumerState<_ShiftApprovalsTab> {
                 const SizedBox(height: AppSpacing.md),
                 const Text('Vardiyada', style: AppTypography.titleMedium),
                 const SizedBox(height: AppSpacing.sm),
-                for (final shift in running) _ShiftCard(shift: shift),
+                for (final shift in running)
+                  _ShiftCard(
+                    shift: shift,
+                    busy: _busyShiftId == shift.shiftId,
+                    onClose: () => _close(shift),
+                  ),
               ],
             ],
           ),
@@ -192,6 +228,7 @@ class _ShiftCard extends StatelessWidget {
     this.onApprove,
     this.onAdjust,
     this.onReject,
+    this.onClose,
   });
 
   final CourierShift shift;
@@ -199,6 +236,7 @@ class _ShiftCard extends StatelessWidget {
   final VoidCallback? onApprove;
   final VoidCallback? onAdjust;
   final VoidCallback? onReject;
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -247,9 +285,135 @@ class _ShiftCard extends StatelessWidget {
                 ],
               ),
             ],
+            if (onClose != null) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: OutlinedButton.icon(
+                  key: Key('closeShift-${shift.shiftId}'),
+                  onPressed: busy ? null : onClose,
+                  icon: const Icon(Icons.stop_circle_outlined),
+                  label: const Text('Vardiyayı Sonlandır'),
+                ),
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+}
+
+/// "Vardiyayı Sonlandır": the day and time the shift really ended (after
+/// its start, not in the future) and a mandatory reason.
+class _CloseShiftDialog extends StatefulWidget {
+  const _CloseShiftDialog({required this.shift});
+
+  final CourierShift shift;
+
+  @override
+  State<_CloseShiftDialog> createState() => _CloseShiftDialogState();
+}
+
+class _CloseShiftDialogState extends State<_CloseShiftDialog> {
+  final _reason = TextEditingController();
+  late DateTime _time = DateTime.now();
+  String? _error;
+
+  DateTime get _start =>
+      (widget.shift.approvedStartAt ?? widget.shift.requestedStartAt).toLocal();
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pick() async {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final startDay = DateUtils.dateOnly(_start);
+    var day = DateUtils.dateOnly(_time);
+    if (startDay != today) {
+      final pickedDay = await showDatePicker(
+        context: context,
+        initialDate: day,
+        firstDate: startDay,
+        lastDate: today,
+        helpText: 'Vardiyanın bittiği gün',
+      );
+      if (pickedDay == null || !mounted) return;
+      day = pickedDay;
+    }
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_time),
+      helpText: 'Vardiyanın bittiği saat',
+    );
+    if (picked == null) return;
+    setState(() {
+      _time =
+          DateTime(day.year, day.month, day.day, picked.hour, picked.minute);
+      _error = null;
+    });
+  }
+
+  void _save() {
+    if (_time.isAfter(DateTime.now())) {
+      setState(() => _error = 'İleri bir saat seçilemez.');
+      return;
+    }
+    if (!_time.isAfter(_start)) {
+      setState(() => _error = 'Bitiş, başlangıçtan sonra olmalı.');
+      return;
+    }
+    if (_reason.text.trim().isEmpty) {
+      setState(() => _error = 'Gerekçe yazın.');
+      return;
+    }
+    Navigator.of(context).pop((time: _time, reason: _reason.text.trim()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('${widget.shift.courierName} — Vardiyayı Sonlandır'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Başlangıç: ${isoDay(_start)} ${formatClock(_start)}'),
+          const SizedBox(height: AppSpacing.sm),
+          OutlinedButton.icon(
+            key: const Key('closeShiftPickTime'),
+            onPressed: _pick,
+            icon: const Icon(Icons.schedule_rounded),
+            label: Text('Bitiş: ${isoDay(_time)} ${formatClock(_time)}'),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          TextField(
+            key: const Key('closeShiftReason'),
+            controller: _reason,
+            maxLength: 300,
+            decoration: const InputDecoration(
+                labelText: "Gerekçe (örn. Vardiya Bitir'e basmayı unuttu)"),
+          ),
+          if (_error != null)
+            Text(_error!,
+                style:
+                    AppTypography.bodySmall.copyWith(color: AppColors.error)),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('İptal'),
+        ),
+        ElevatedButton(
+          key: const Key('closeShiftSave'),
+          onPressed: _save,
+          child: const Text('Sonlandır'),
+        ),
+      ],
     );
   }
 }

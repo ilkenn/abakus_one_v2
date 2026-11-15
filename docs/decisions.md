@@ -21618,3 +21618,8 @@ owner):**
   organization — enforced by the callables; clients cannot read the collections directly.
 - **Keyed by the sign-in account, not the courier record:** a courier record without a linked account
   earns nothing until one is linked.
+- **Follow-ups (same day, product owner request):** a manager may end a running shift the courier forgot
+  to end (end time + reason, at most 24 hours, audited as `courierShift.closedByManager`). "Yola Çıktım"
+  on a card-at-the-door order (bank or meal card) requires the courier to confirm it has the POS device;
+  this check lives in the app only. The old in-memory pay screen and the use cases only it used were
+  deleted.

@@ -28,6 +28,14 @@ const courierDeliveryPaymentMethods = [
   (id: 'edenred', label: 'Edenred'),
 ];
 
+/// ADR-085 stage 5 follow-up — the order is paid at the door on a card
+/// terminal (bank card or meal card), so the courier must take the POS
+/// device: everything pay-on-delivery except cash.
+bool courierNeedsPosDevice(String? paymentMethodId) =>
+    paymentMethodId != null &&
+    paymentMethodId != 'cash' &&
+    courierDeliveryPaymentMethods.any((m) => m.id == paymentMethodId);
+
 String courierPaymentMethodLabel(String? id) =>
     courierDeliveryPaymentMethods.where((m) => m.id == id).firstOrNull?.label ??
     (id ?? '-');

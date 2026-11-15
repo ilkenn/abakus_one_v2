@@ -41,6 +41,15 @@ abstract interface class CourierPayGateway {
     String? reason,
   });
 
+  /// Ends a running shift the courier forgot to end, at [endedAt], with a
+  /// mandatory [reason].
+  Future<void> closeShift({
+    required String organizationId,
+    required String shiftId,
+    required DateTime endedAt,
+    required String reason,
+  });
+
   Future<CourierEarningsReport> earnings({
     required String organizationId,
     required String fromDate,
@@ -103,6 +112,12 @@ class FirebaseCourierPayGateway implements CourierPayGateway {
         return 'Vardiya bitişi reddedilemez; gerekirse saati düzeltin.';
       case 'courierShift/not-pending':
         return 'Bu vardiya artık onay beklemiyor.';
+      case 'courierShift/not-running':
+        return 'Bu vardiya artık sürmüyor.';
+      case 'courierShift/end-time-required':
+        return 'Vardiyanın bittiği saati seçin.';
+      case 'courierShift/too-long':
+        return 'Bir vardiya en fazla 24 saat sürebilir.';
     }
     switch (code) {
       case 'permission-denied':
@@ -205,6 +220,22 @@ class FirebaseCourierPayGateway implements CourierPayGateway {
   }
 
   @override
+  Future<void> closeShift({
+    required String organizationId,
+    required String shiftId,
+    required DateTime endedAt,
+    required String reason,
+  }) async {
+    await _call('reviewCourierShift', {
+      'organizationId': organizationId,
+      'shiftId': shiftId,
+      'decision': 'close',
+      'approvedAtMillis': endedAt.millisecondsSinceEpoch,
+      'reason': reason.trim(),
+    });
+  }
+
+  @override
   Future<CourierEarningsReport> earnings({
     required String organizationId,
     required String fromDate,
@@ -270,6 +301,15 @@ class UnavailableCourierPayGateway implements CourierPayGateway {
     required bool approve,
     DateTime? approvedAt,
     String? reason,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<void> closeShift({
+    required String organizationId,
+    required String shiftId,
+    required DateTime endedAt,
+    required String reason,
   }) async =>
       throw _error;
 

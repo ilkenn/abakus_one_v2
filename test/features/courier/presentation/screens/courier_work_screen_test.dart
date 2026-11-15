@@ -84,7 +84,8 @@ CourierWorkAccount _account({bool external = false}) => CourierWorkAccount(
       isActive: true,
     );
 
-CourierWorkOrder _order(CourierWorkOrderStatus status, {String? phone}) =>
+CourierWorkOrder _order(CourierWorkOrderStatus status,
+        {String? phone, String plannedMethod = 'cash'}) =>
     CourierWorkOrder(
       orderId: 'o1',
       orderNumber: 'DL-0001',
@@ -95,7 +96,7 @@ CourierWorkOrder _order(CourierWorkOrderStatus status, {String? phone}) =>
       addressLine: 'Moda Caddesi No: 12',
       courierNote: 'Zile basmayın',
       amountDueMinorUnits: 45000,
-      plannedPaymentMethodId: 'cash',
+      plannedPaymentMethodId: plannedMethod,
       reportedPaymentMethodId:
           status == CourierWorkOrderStatus.deliveredAwaitingSettlement
               ? 'multinet'
@@ -198,6 +199,47 @@ void main() {
     expect(find.text('Caferağa'), findsOneWidget);
     expect(find.byKey(const Key('courierPiiRemoved-o1')), findsOneWidget);
     expect(find.text('Tahsilat: Multinet'), findsOneWidget);
+  });
+
+  testWidgets(
+      'a card-at-the-door order asks "POS Cihazı Kontrolü" before departing; '
+      'a cash order does not', (tester) async {
+    final repository = _FakeRepository()
+      ..account = _account()
+      ..latestOrders = [
+        _order(CourierWorkOrderStatus.assigned, plannedMethod: 'credit_card')
+      ];
+    final fakes = await _pump(tester, repository);
+
+    await tester.tap(find.byKey(const Key('departed-o1')));
+    await tester.pumpAndSettle();
+    expect(find.text('POS Cihazı Kontrolü'), findsOneWidget);
+    expect(find.textContaining('KAPIDA POS ile ödenecektir (POS)'),
+        findsOneWidget);
+    expect(
+      tester
+          .widget<ElevatedButton>(
+              find.byKey(const Key('posDeviceConfirmDepart')))
+          .onPressed,
+      isNull,
+      reason: 'not before the box is ticked',
+    );
+    await tester.tap(find.byKey(const Key('posDeviceCancel')));
+    await tester.pumpAndSettle();
+    expect(fakes.gateway.calls, isEmpty, reason: 'no departure without POS');
+
+    await tester.tap(find.byKey(const Key('departed-o1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('posDeviceTaken')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('posDeviceConfirmDepart')));
+    await tester.pumpAndSettle();
+    expect(fakes.gateway.calls, ['departed:o1']);
+
+    // A meal card is swiped on the POS too.
+    expect(courierNeedsPosDevice('multinet'), isTrue);
+    expect(courierNeedsPosDevice('cash'), isFalse);
+    expect(courierNeedsPosDevice(null), isFalse);
   });
 
   testWidgets('a refused action is explained in Turkish', (tester) async {

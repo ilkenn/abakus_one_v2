@@ -178,6 +178,24 @@ class _MyOrdersTabState extends ConsumerState<_MyOrdersTab> {
     }
   }
 
+  /// "Yola Çıktım". A card-at-the-door order first asks the courier to
+  /// confirm it has the POS device (ADR-085 stage 5 follow-up).
+  Future<void> _departed(CourierWorkOrder order) async {
+    if (courierNeedsPosDevice(order.plannedPaymentMethodId)) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => _PosDeviceCheckDialog(order: order),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    await _run(
+      order.orderId,
+      () => ref.read(courierWorkGatewayProvider).markDeparted(order.orderId),
+      '${order.orderNumber}: yola çıktınız.',
+    );
+  }
+
   Future<void> _reportDelivered(CourierWorkOrder order) async {
     final method = await showModalBottomSheet<String>(
       context: context,
@@ -213,18 +231,70 @@ class _MyOrdersTabState extends ConsumerState<_MyOrdersTab> {
           itemBuilder: (_, i) => _OrderCard(
             order: orders[i],
             busy: _busyOrderId == orders[i].orderId,
-            onDeparted: () => _run(
-              orders[i].orderId,
-              () => ref
-                  .read(courierWorkGatewayProvider)
-                  .markDeparted(orders[i].orderId),
-              '${orders[i].orderNumber}: yola çıktınız.',
-            ),
+            onDeparted: () => _departed(orders[i]),
             onDelivered: () => _reportDelivered(orders[i]),
             onOpen: (uri) => ref.read(courierUriLauncherProvider)(uri),
           ),
         );
       },
+    );
+  }
+}
+
+/// "POS Cihazı Kontrolü": the departure waits until the courier ticks
+/// "POS cihazını yanıma aldım".
+class _PosDeviceCheckDialog extends StatefulWidget {
+  const _PosDeviceCheckDialog({required this.order});
+
+  final CourierWorkOrder order;
+
+  @override
+  State<_PosDeviceCheckDialog> createState() => _PosDeviceCheckDialogState();
+}
+
+class _PosDeviceCheckDialogState extends State<_PosDeviceCheckDialog> {
+  bool _taken = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final method =
+        courierPaymentMethodLabel(widget.order.plannedPaymentMethodId);
+    return AlertDialog(
+      key: const Key('posDeviceCheckDialog'),
+      icon: const Icon(Icons.point_of_sale_rounded, color: AppColors.warning),
+      title: const Text('POS Cihazı Kontrolü'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Bu sipariş KAPIDA POS ile ödenecektir ($method). '
+            'Yola çıkmadan POS cihazını yanınıza alın.',
+            style: AppTypography.bodyMedium,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          CheckboxListTile(
+            key: const Key('posDeviceTaken'),
+            contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
+            value: _taken,
+            onChanged: (value) => setState(() => _taken = value ?? false),
+            title: const Text('POS cihazını yanıma aldım'),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: const Key('posDeviceCancel'),
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Vazgeç'),
+        ),
+        ElevatedButton(
+          key: const Key('posDeviceConfirmDepart'),
+          onPressed: _taken ? () => Navigator.of(context).pop(true) : null,
+          child: const Text("POS'u Aldım, Yola Çık"),
+        ),
+      ],
     );
   }
 }

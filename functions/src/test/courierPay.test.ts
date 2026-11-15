@@ -266,3 +266,41 @@ test("shifts: a pool courier has none", async () => {
   const mine = await callCallable(MY_PAY_URL, { fromDate: istanbulToday(), toDate: istanbulToday() }, courier.idToken);
   assert.strictEqual(mine.body.result!.shiftsEnabled, false);
 });
+
+test("shifts: a manager ends a running shift the courier forgot to end — time and reason required", async () => {
+  const { organizationId, branchId } = await seedTenant();
+  await bootstrapAdmin(organizationId);
+  const manager = await seededMember(organizationId, ["manager"], [branchId]);
+  const courier = await linkedCourier(organizationId, branchId);
+  assert.strictEqual((await callCallable(SET_RATE_URL, {
+    organizationId, targetUid: courier.uid, courierKind: "shop", perPackageMinorUnits: 0, hourlyMinorUnits: 6000,
+  }, manager.idToken)).httpStatus, 200);
+  const start = await callCallable(START_SHIFT_URL, {}, courier.idToken);
+  const shift = start.body.result!.shift as Record<string, unknown>;
+  const startedAt = (shift.requestedStartAtMillis as number) - 3 * 3600_000;
+  assert.strictEqual((await callCallable(REVIEW_SHIFT_URL, {
+    organizationId, shiftId: shift.shiftId, decision: "approve", approvedAtMillis: startedAt, reason: "Erken başladı",
+  }, manager.idToken)).httpStatus, 200);
+
+  const close = { organizationId, shiftId: shift.shiftId, decision: "close" };
+  assert.strictEqual((await callCallable(REVIEW_SHIFT_URL, { ...close, reason: "Unuttu" }, manager.idToken)).body.error?.details?.code, "courierShift/end-time-required");
+  const endAt = startedAt + 2 * 3600_000;
+  assert.strictEqual((await callCallable(REVIEW_SHIFT_URL, { ...close, approvedAtMillis: endAt }, manager.idToken)).body.error?.details?.code, "courierShift/reason-required");
+  assert.strictEqual((await callCallable(REVIEW_SHIFT_URL, { ...close, approvedAtMillis: Date.now() + 3600_000, reason: "x" }, manager.idToken)).body.error?.details?.code, "courierShift/future-time");
+  assert.strictEqual((await callCallable(REVIEW_SHIFT_URL, { ...close, approvedAtMillis: startedAt - 60_000, reason: "x" }, manager.idToken)).body.error?.details?.code, "courierShift/end-before-start");
+  assert.strictEqual((await callCallable(REVIEW_SHIFT_URL, { organizationId, shiftId: shift.shiftId, decision: "approve" }, manager.idToken)).body.error?.details?.code, "courierShift/not-pending");
+
+  const closed = await callCallable(REVIEW_SHIFT_URL, { ...close, approvedAtMillis: endAt, reason: "Vardiya Bitir'e basmayı unuttu" }, manager.idToken);
+  assert.strictEqual(closed.httpStatus, 200, JSON.stringify(closed.body));
+  const result = closed.body.result!.shift as Record<string, unknown>;
+  assert.strictEqual(result.status, "closed");
+  assert.strictEqual(result.approvedMinutes, 120);
+  assert.strictEqual(result.closedByManager, true);
+  assert.strictEqual(result.requestedEndAtMillis, null, "the courier never pressed the end");
+  const line = (await db().collection("courierEarnings").doc(`shift-${shift.shiftId}`).get()).data()!;
+  assert.strictEqual(line.amountMinorUnits, 12000, "2 h at 60 TL");
+  const audit = await db().collection("auditEvents").doc(`courierShift-${shift.shiftId}-closedByManager`).get();
+  assert.strictEqual(audit.data()?.reasonMessage, "Vardiya Bitir'e basmayı unuttu");
+  assert.strictEqual((await callCallable(START_SHIFT_URL, {}, courier.idToken)).httpStatus, 200, "the courier can start again");
+  assert.strictEqual((await callCallable(REVIEW_SHIFT_URL, { ...close, approvedAtMillis: endAt, reason: "x" }, manager.idToken)).body.error?.details?.code, "courierShift/not-running");
+});

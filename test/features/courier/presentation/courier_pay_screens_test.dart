@@ -217,6 +217,32 @@ void main() {
       expect(gateway.calls.last, 'earnings:2026-11-01..2026-11-15');
     });
 
+    testWidgets(
+        'a running shift the courier forgot to end is ended by the manager '
+        'with a reason', (tester) async {
+      final gateway = FakeCourierPayGateway()
+        ..openShifts = [_shift(CourierShiftStatus.active, id: 'd')];
+      await _pump(tester, gateway,
+          const CourierPayManagementScreen(organizationId: 'org-1'));
+
+      await tester.tap(find.byKey(const Key('closeShift-d')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('closeShiftSave')));
+      await tester.pumpAndSettle();
+      expect(find.text('Gerekçe yazın.'), findsOneWidget);
+      expect(gateway.calls, isEmpty);
+
+      await tester.enterText(find.byKey(const Key('closeShiftReason')),
+          "Vardiya Bitir'e basmayı unuttu");
+      await tester.tap(find.byKey(const Key('closeShiftSave')));
+      await tester.pumpAndSettle();
+      expect(gateway.calls, ['close:d']);
+      expect(gateway.lastReason, "Vardiya Bitir'e basmayı unuttu");
+      expect(gateway.lastApprovedAt, isNotNull);
+      expect(find.text('Ali Kurye: vardiya sonlandırıldı.'), findsOneWidget);
+      expect(find.byKey(const Key('noOpenShifts')), findsOneWidget);
+    });
+
     testWidgets('nothing open is an explicit empty state', (tester) async {
       await _pump(tester, FakeCourierPayGateway(),
           const CourierPayManagementScreen(organizationId: 'org-1'));

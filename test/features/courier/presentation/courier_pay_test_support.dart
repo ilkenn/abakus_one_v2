@@ -65,6 +65,20 @@ class FakeCourierPayGateway implements CourierPayGateway {
   }
 
   @override
+  Future<void> closeShift({
+    required String organizationId,
+    required String shiftId,
+    required DateTime endedAt,
+    required String reason,
+  }) async {
+    calls.add('close:$shiftId');
+    _maybeFail();
+    lastApprovedAt = endedAt;
+    lastReason = reason;
+    openShifts = openShifts.where((s) => s.shiftId != shiftId).toList();
+  }
+
+  @override
   Future<CourierEarningsReport> earnings({
     required String organizationId,
     required String fromDate,

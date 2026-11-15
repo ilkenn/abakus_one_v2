@@ -82,6 +82,8 @@ export interface CourierShiftDoc {
   approvedEndAt: Timestamp | null;
   endReviewedByUid: string | null;
   endAdjustReason: string | null;
+  /** The manager ended a shift the courier forgot to end. */
+  closedByManager?: boolean;
   rejectReason: string | null;
   approvedMinutes: number | null;
   earningLineId: string | null;
@@ -118,6 +120,7 @@ const MAX_REASON_LENGTH = 300;
 const MAX_EFFECTIVE_DAYS_AHEAD = 366;
 const MAX_PERIOD_DAYS = 93;
 const MAX_ADJUST_MS = 12 * 60 * 60 * 1000;
+const MAX_SHIFT_MS = 24 * 60 * 60 * 1000;
 const MAX_EARNING_LINES = 5000;
 const ISTANBUL_OFFSET_MS = 3 * 60 * 60 * 1000; // UTC+3 all year since 2016
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -487,6 +490,7 @@ function serializeShift(id: string, shift: CourierShiftDoc) {
     endAdjustReason: shift.endAdjustReason,
     rejectReason: shift.rejectReason,
     approvedMinutes: shift.approvedMinutes,
+    closedByManager: shift.closedByManager ?? false,
   };
 }
 
@@ -619,6 +623,8 @@ function resolveApprovedTime(raw: unknown, requested: Timestamp, nowMillis: numb
  * The manager's answer to a start or end request: `approve` (optionally
  * with a corrected time — then a reason is required) or, for a start only,
  * `reject`. Approving the end closes the shift and writes its earning line.
+ * `close` ends a running shift the courier forgot to end: the manager gives
+ * the end time and a reason (stage 5 follow-up).
  */
 export const reviewCourierShift = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
@@ -626,7 +632,9 @@ export const reviewCourierShift = onCall({ enforceAppCheck: shouldEnforceAppChec
   const organizationId = requireString(data.organizationId, "organizationId");
   const shiftId = requireString(data.shiftId, "shiftId");
   const decision = data.decision;
-  if (decision !== "approve" && decision !== "reject") invalid('decision must be "approve" or "reject".');
+  if (decision !== "approve" && decision !== "reject" && decision !== "close") {
+    invalid('decision must be "approve", "reject" or "close".');
+  }
   const reason = optionalReason(data.reason);
   const scope = await resolveStaffScope(request, organizationId);
   const actorUid = request.auth.uid;
@@ -653,6 +661,13 @@ export const reviewCourierShift = onCall({ enforceAppCheck: shouldEnforceAppChec
         actorType: "staff", actorUid, actorRoles, correlationId: generateCorrelationId(), now,
       });
 
+    if (decision === "close" && shift.status !== "active") {
+      precondition("Only a running shift can be ended by a manager.", "courierShift/not-running");
+    }
+    if (decision !== "close" && shift.status === "active") {
+      precondition(`This shift is "${shift.status}" and waits for no approval.`, "courierShift/not-pending");
+    }
+
     if (shift.status === "startRequested") {
       if (decision === "reject") {
         tx.update(shiftRef, { status: "rejected", rejectReason: reason || null, startReviewedByUid: actorUid, updatedAt: now });
@@ -672,16 +687,34 @@ export const reviewCourierShift = onCall({ enforceAppCheck: shouldEnforceAppChec
       return { shift: serializeShift(shiftId, { ...shift, ...update }) };
     }
 
-    if (shift.status === "endRequested") {
+    if (shift.status === "endRequested" || shift.status === "active") {
       if (decision === "reject") {
         invalid("The end of a shift cannot be rejected; correct the time instead.", "courierShift/end-not-rejectable");
       }
-      const requestedEndAt = shift.requestedEndAt!;
-      const approvedEndAt = resolveApprovedTime(data.approvedAtMillis, requestedEndAt, nowMillis);
       const startMillis = shift.approvedStartAt!.toMillis();
+      const closedByManager = shift.status === "active";
+      let approvedEndAt: Timestamp;
+      let adjusted: boolean;
+      if (closedByManager) {
+        // The courier never pressed "Vardiya Bitir": the manager states when it ended.
+        const raw = data.approvedAtMillis;
+        if (typeof raw !== "number" || !Number.isInteger(raw)) {
+          invalid("approvedAtMillis is required to end a running shift.", "courierShift/end-time-required");
+        }
+        if ((raw as number) > nowMillis) invalid("An approved time cannot be in the future.", "courierShift/future-time");
+        if ((raw as number) - startMillis > MAX_SHIFT_MS) {
+          invalid("A shift can last at most 24 hours.", "courierShift/too-long");
+        }
+        if (reason.length === 0) invalid("A reason is required to end a shift for the courier.", "courierShift/reason-required");
+        approvedEndAt = Timestamp.fromMillis(raw as number);
+        adjusted = true;
+      } else {
+        const requestedEndAt = shift.requestedEndAt!;
+        approvedEndAt = resolveApprovedTime(data.approvedAtMillis, requestedEndAt, nowMillis);
+        adjusted = approvedEndAt.toMillis() !== requestedEndAt.toMillis();
+        if (adjusted && reason.length === 0) invalid("A reason is required when the time is corrected.", "courierShift/reason-required");
+      }
       if (approvedEndAt.toMillis() <= startMillis) invalid("The end must be after the start.", "courierShift/end-before-start");
-      const adjusted = approvedEndAt.toMillis() !== requestedEndAt.toMillis();
-      if (adjusted && reason.length === 0) invalid("A reason is required when the time is corrected.", "courierShift/reason-required");
       // The hourly rate in force on the shift's (approved) start date.
       const rate = profileSnap.exists
         ? rateInForce((profileSnap.data() as CourierPayProfileDoc).versions ?? [], istanbulDate(startMillis))
@@ -710,11 +743,12 @@ export const reviewCourierShift = onCall({ enforceAppCheck: shouldEnforceAppChec
       tx.set(db.collection(COURIER_EARNINGS_COLLECTION).doc(lineId), line);
       const update = {
         status: "closed" as const, approvedEndAt, endReviewedByUid: actorUid,
-        endAdjustReason: adjusted ? reason : null, approvedMinutes: minutes, earningLineId: lineId, updatedAt: now,
+        endAdjustReason: adjusted ? reason : null, approvedMinutes: minutes, earningLineId: lineId,
+        closedByManager, updatedAt: now,
       };
       tx.update(shiftRef, update);
       tx.delete(pointerRef);
-      audit("courierShift.endApproved", {
+      audit(closedByManager ? "courierShift.closedByManager" : "courierShift.endApproved", {
         approvedEndAtMillis: approvedEndAt.toMillis(), adjusted, approvedMinutes: minutes, amountMinorUnits: line.amountMinorUnits,
       }, adjusted ? reason : null);
       return { shift: serializeShift(shiftId, { ...shift, ...update }) };
