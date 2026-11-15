@@ -1,4 +1,5 @@
 import 'package:cloud_functions/cloud_functions.dart' as functions;
+import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 
 import '../../../core/services/logging/logging_provider.dart';
 import '../../../core/services/logging/logging_service.dart';
@@ -138,11 +139,23 @@ class FirebaseCustomerRegistrationGateway
   FirebaseCustomerRegistrationGateway({
     functions.FirebaseFunctions? functionsInstance,
     LoggingService? loggingService,
+    Future<String?> Function()? currentSignInProvider,
   })  : _functions = functionsInstance ?? functions.FirebaseFunctions.instance,
-        _loggingService = loggingService ?? defaultLoggingService();
+        _loggingService = loggingService ?? defaultLoggingService(),
+        _currentSignInProvider =
+            currentSignInProvider ?? _firebaseCurrentSignInProvider;
 
   final functions.FirebaseFunctions _functions;
   final LoggingService _loggingService;
+
+  /// How the current Firebase user signed in (`phone`, `password`, ...).
+  final Future<String?> Function() _currentSignInProvider;
+
+  static Future<String?> _firebaseCurrentSignInProvider() async {
+    final user = firebase_auth.FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+    return (await user.getIdTokenResult()).signInProvider;
+  }
 
   @override
   Future<CompleteCustomerProfileResult> completeCustomerProfile({
@@ -217,6 +230,15 @@ class FirebaseCustomerRegistrationGateway
 
   @override
   Future<CustomerProfileCompletionResult> getCompletionState() async {
+    // A staff member's phone + password sign-in (ADR-085 revision) is not
+    // a customer registration: the server serves this state to SMS
+    // (phone-provider) customers only and refuses a password session, which
+    // used to leave every staff member stuck on "Hesap bilgilerine şu anda
+    // ulaşılamıyor". Nothing to complete for staff; the server still
+    // refuses every customer-only action to such a session.
+    if (await _currentSignInProvider() == 'password') {
+      return const CustomerProfileCompletionResult(isComplete: true);
+    }
     final callable =
         _functions.httpsCallable('getCustomerProfileCompletionState');
 

@@ -1,3 +1,4 @@
+import 'package:cloud_functions/cloud_functions.dart' as functions;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:abakus_one_v2/features/customer_registration/data/customer_registration_gateway.dart';
 
@@ -121,4 +122,41 @@ void main() {
       expect(exception.toString(), contains('invalid-argument'));
     });
   });
+
+  group('getCompletionState for a staff password session', () {
+    test(
+        'a phone + password (staff) sign-in needs no customer registration '
+        'and never calls the customer-only callable', () async {
+      final functionsFake = _NoCallFunctions();
+      final gateway = FirebaseCustomerRegistrationGateway(
+        functionsInstance: functionsFake,
+        currentSignInProvider: () async => 'password',
+      );
+      final result = await gateway.getCompletionState();
+      expect(result.isComplete, isTrue);
+      expect(functionsFake.called, isFalse);
+    });
+
+    test('an SMS (phone) sign-in still asks the server', () async {
+      final functionsFake = _NoCallFunctions();
+      final gateway = FirebaseCustomerRegistrationGateway(
+        functionsInstance: functionsFake,
+        currentSignInProvider: () async => 'phone',
+      );
+      await expectLater(gateway.getCompletionState(), throwsStateError);
+      expect(functionsFake.called, isTrue);
+    });
+  });
+}
+
+/// Records whether the customer-only callable was reached.
+class _NoCallFunctions extends Fake implements functions.FirebaseFunctions {
+  bool called = false;
+
+  @override
+  functions.HttpsCallable httpsCallable(String name,
+      {functions.HttpsCallableOptions? options}) {
+    called = true;
+    throw StateError('callable $name reached');
+  }
 }
