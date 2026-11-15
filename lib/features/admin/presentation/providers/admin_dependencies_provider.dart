@@ -12,6 +12,10 @@ import '../../../../core/services/logging/logging_provider.dart';
 import '../../data/firebase_staff_member_repository.dart';
 import '../../data/staff_account_gateway.dart';
 import '../../../courier/presentation/providers/courier_core_dependencies_provider.dart';
+// ADR-085 stage 5 — the staff form reads/sets courier pay through the
+// courier feature's gateway provider (one provider, overridable in tests).
+export '../../../courier/presentation/providers/courier_pay_providers.dart'
+    show courierPayGatewayProvider;
 import '../../../navigation/presentation/providers/current_branch_provider.dart';
 import '../../../pos/presentation/providers/kds_dependencies_provider.dart';
 import '../../../restaurant/presentation/providers/restaurant_operations_dependencies_provider.dart';

@@ -8,6 +8,8 @@ import '../../../../shared/widgets/cards/app_card.dart';
 import '../../../../shared/widgets/feedback/empty_view.dart';
 import '../../../../shared/widgets/feedback/error_view.dart';
 import '../../../../shared/widgets/feedback/loading_view.dart';
+import '../../../courier/data/courier_pay_gateway.dart';
+import '../../../courier/domain/pay/courier_pay_models.dart';
 import '../../../navigation/presentation/providers/current_branch_provider.dart';
 import '../../../pos/domain/authorization/pos_authorization_policy.dart';
 import '../../../pos/domain/authorization/staff_role.dart';
@@ -114,6 +116,7 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
       assignableRoles: _assignableRoles,
       branchIds: branchIds,
       initialBranchId: currentBranch,
+      allowPoolCourier: _canChangeActive,
     );
     if (input == null || !mounted) return;
     await _run((gateway, organizationId) async {
@@ -125,6 +128,7 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
         password: input.password,
         roles: input.roles,
         branchAccess: {input.branchId},
+        courierPay: input.courierPay,
       );
       final name = '${input.firstName} ${input.lastName}';
       return pending
@@ -147,21 +151,61 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
     });
   }
 
+  /// ADR-085 stage 5 — for a courier the edit form also shows (and can
+  /// replace from today or a later day) its pay rate.
   Future<void> _changeRoles(StaffMember member) async {
-    final roles = await showStaffRolesDialog(
+    final targetUid = member.authUid ?? member.id;
+    final organizationId = ref.read(currentOrganizationIdProvider);
+    final payGateway = ref.read(courierPayGatewayProvider);
+    CourierPayRate? currentRate;
+    if (member.roles.contains(StaffRole.courier)) {
+      setState(() => _busy = true);
+      try {
+        currentRate = await payGateway.currentRate(
+            organizationId: organizationId, targetUid: targetUid);
+      } on CourierPayException catch (error) {
+        if (mounted) _showMessage(error.message, isError: true);
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
+      if (!mounted) return;
+    }
+    final result = await showStaffRolesDialog(
       context,
       memberName: member.displayName,
       current: member.roles,
       assignableRoles: _assignableRoles,
+      currentCourierRate: currentRate,
+      allowPoolCourier: _canChangeActive,
     );
-    if (roles == null || !mounted) return;
+    if (result == null || !mounted) return;
+    final rolesChanged = result.roles.length != member.roles.length ||
+        !result.roles.containsAll(member.roles);
+    final pay = result.courierPay;
+    if (!rolesChanged && pay == null) return;
     await _run((gateway, organizationId) async {
-      await gateway.updateStaffMember(
-        organizationId: organizationId,
-        targetUid: member.authUid ?? member.id,
-        roles: roles,
-      );
-      return 'Roller güncellendi.';
+      if (rolesChanged) {
+        await gateway.updateStaffMember(
+          organizationId: organizationId,
+          targetUid: targetUid,
+          roles: result.roles,
+        );
+      }
+      if (pay != null) {
+        try {
+          await payGateway.setRate(
+              organizationId: organizationId, targetUid: targetUid, input: pay);
+        } on CourierPayException catch (error) {
+          throw StaffAccountException(rolesChanged
+              ? 'Roller güncellendi, ücret kaydedilemedi: ${error.message}'
+              : error.message);
+        }
+      }
+      return pay == null
+          ? 'Roller güncellendi.'
+          : (rolesChanged
+              ? 'Roller ve ücret güncellendi.'
+              : 'Ücret güncellendi.');
     });
   }
 
@@ -252,9 +296,11 @@ class _StaffManagementScreenState extends ConsumerState<StaffManagementScreen> {
                       value: 'password',
                       child: Text('Şifre Değiştir'),
                     ),
-                    const PopupMenuItem(
+                    PopupMenuItem(
                       value: 'roles',
-                      child: Text('Rolleri Değiştir'),
+                      child: Text(member.roles.contains(StaffRole.courier)
+                          ? 'Rol ve Ücreti Düzenle'
+                          : 'Rolleri Değiştir'),
                     ),
                     if (_canChangeActive)
                       PopupMenuItem(

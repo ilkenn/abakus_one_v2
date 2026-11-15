@@ -340,3 +340,42 @@ test("Faz 3a: an external courier is closed per branch; the courier-reported met
   assert.strictEqual(courier.dispatchStatus, "delivering");
   assert.strictEqual((await db().collection("orders").doc(elsewhere).get()).data()!.status, "outForDelivery");
 });
+
+test("ADR-085 stage 5: settling writes one package earning per order at the rate in force; no profile, no line", async () => {
+  const s = await setup();
+  const courierUid = nextId("courierUid");
+  await db().collection("couriers").doc(s.courierId).update({ authUid: courierUid });
+  const today = new Date(Date.now() + 3 * 3600_000).toISOString().slice(0, 10);
+  const version = (sequence: number, effectiveFromDate: string, perPackageMinorUnits: number) => ({
+    versionId: `v${sequence}`, sequence, courierKind: "shop", perPackageMinorUnits, hourlyMinorUnits: 10000,
+    currencyCode: "TRY", effectiveFromDate, createdAt: admin.firestore.Timestamp.now(), createdByUid: "admin",
+  });
+  await db().collection("courierPayProfiles").doc(`${s.f.organizationId}_${courierUid}`).set({
+    organizationId: s.f.organizationId, staffUid: courierUid, branchIds: [s.f.branchId],
+    versions: [version(1, "2020-01-01", 3000), version(2, today, 4500), version(3, "2099-01-01", 9900)],
+    updatedAt: admin.firestore.Timestamp.now(),
+  });
+  const a = await outForDeliveryOrder(s.f, s.courierId, "cash");
+  const b = await outForDeliveryOrder(s.f, s.courierId, "credit_card");
+  const { httpStatus, body } = await callCallable(SETTLE_URL, settleRequest(s, [
+    { orderId: a, paymentMethodId: "cash" },
+    { orderId: b, paymentMethodId: "credit_card" },
+  ], 10000), s.f.staff.idToken);
+  assert.strictEqual(httpStatus, 200, JSON.stringify(body));
+  assert.strictEqual(body.result!.earningLines, 2);
+  for (const orderId of [a, b]) {
+    const line = (await db().collection("courierEarnings").doc(`pkg-${orderId}`).get()).data()!;
+    assert.strictEqual(line.kind, "package");
+    assert.strictEqual(line.staffUid, courierUid);
+    assert.strictEqual(line.amountMinorUnits, 4500, "today's version, not the old nor the future one");
+    assert.strictEqual(line.rateVersionId, "v2");
+    assert.strictEqual(line.earnedDate, today);
+  }
+
+  const s2 = await setup();
+  const c = await outForDeliveryOrder(s2.f, s2.courierId, "cash");
+  const plain = await callCallable(SETTLE_URL, settleRequest(s2, [{ orderId: c, paymentMethodId: "cash" }], 10000), s2.f.staff.idToken);
+  assert.strictEqual(plain.httpStatus, 200, JSON.stringify(plain.body));
+  assert.strictEqual(plain.body.result!.earningLines, 0);
+  assert.strictEqual((await db().collection("courierEarnings").doc(`pkg-${c}`).get()).exists, false);
+});

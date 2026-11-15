@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
 import '../../../core/services/functions/rest_callable_client.dart';
+import '../../courier/domain/pay/courier_pay_models.dart';
 import '../../pos/domain/authorization/staff_role.dart';
 
 /// A refused staff-account command, already translated into a Turkish
@@ -29,6 +30,7 @@ abstract interface class StaffAccountGateway {
     required String password,
     required Set<StaffRole> roles,
     required Set<String> branchAccess,
+    CourierPayRateInput? courierPay,
   });
 
   Future<void> setStaffPassword({
@@ -105,6 +107,7 @@ class FirebaseStaffAccountGateway implements StaffAccountGateway {
     required String password,
     required Set<StaffRole> roles,
     required Set<String> branchAccess,
+    CourierPayRateInput? courierPay,
   }) async {
     final result = await _call('createStaffAccount', {
       'organizationId': organizationId,
@@ -114,6 +117,7 @@ class FirebaseStaffAccountGateway implements StaffAccountGateway {
       'password': password,
       'roles': [for (final role in roles) role.name],
       'branchAccess': branchAccess.toList(),
+      if (courierPay != null) 'courierPay': courierPay.toJson(),
     });
     return result['status'] == 'pendingApproval';
   }
@@ -164,6 +168,7 @@ class UnavailableStaffAccountGateway implements StaffAccountGateway {
     required String password,
     required Set<StaffRole> roles,
     required Set<String> branchAccess,
+    CourierPayRateInput? courierPay,
   }) async =>
       throw _unavailable;
 

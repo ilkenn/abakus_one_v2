@@ -9,11 +9,13 @@ import 'package:abakus_one_v2/features/admin/domain/staff/staff_member_status.da
 import 'package:abakus_one_v2/features/admin/presentation/providers/admin_dependencies_provider.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/staff_detail_screen.dart';
 import 'package:abakus_one_v2/features/admin/presentation/screens/staff_management_screen.dart';
+import 'package:abakus_one_v2/features/courier/domain/pay/courier_pay_models.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/actor_session.dart';
 import 'package:abakus_one_v2/features/pos/domain/authorization/staff_role.dart';
 import 'package:abakus_one_v2/features/pos/presentation/providers/actor_session_provider.dart';
 
 import '../test_support/admin_test_fixtures.dart';
+import '../../courier/presentation/courier_pay_test_support.dart';
 
 /// Records every command and mirrors the effect into the in-memory roster,
 /// like the real callables would. [refuseWith] makes the next call fail.
@@ -25,6 +27,7 @@ class _FakeStaffAccountGateway implements StaffAccountGateway {
   String? lastPassword;
   Set<StaffRole>? lastRoles;
   Set<String>? lastBranches;
+  CourierPayRateInput? lastCourierPay;
   String? refuseWith;
 
   void _maybeRefuse() {
@@ -48,10 +51,12 @@ class _FakeStaffAccountGateway implements StaffAccountGateway {
     required String password,
     required Set<StaffRole> roles,
     required Set<String> branchAccess,
+    CourierPayRateInput? courierPay,
   }) async {
     calls.add('create:$phoneNumber');
     _maybeRefuse();
     lastPassword = password;
+    lastCourierPay = courierPay;
     lastRoles = roles;
     lastBranches = branchAccess;
     await repository.save(StaffMember(
@@ -118,16 +123,24 @@ const _admin = ActorSession(
 void main() {
   late InMemoryStaffMemberRepository repository;
   late _FakeStaffAccountGateway gateway;
+  late FakeCourierPayGateway payGateway;
 
   Future<void> pumpScreen(WidgetTester tester,
-      {ActorSession session = _manager}) async {
+      {ActorSession session = _manager,
+      List<StaffMember> seed = const [],
+      CourierPayRate? courierRate}) async {
     repository = InMemoryStaffMemberRepository();
+    for (final member in seed) {
+      await repository.save(member);
+    }
     gateway = _FakeStaffAccountGateway(repository);
+    payGateway = FakeCourierPayGateway()..rate = courierRate;
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           staffMemberRepositoryProvider.overrideWithValue(repository),
           staffAccountGatewayProvider.overrideWithValue(gateway),
+          courierPayGatewayProvider.overrideWithValue(payGateway),
           actorSessionProvider.overrideWith((ref) => session),
         ],
         child: const MaterialApp(
@@ -274,5 +287,117 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(StaffDetailScreen), findsOneWidget);
+  });
+
+  Future<void> openCreateAsCourier(WidgetTester tester) async {
+    await tester.tap(find.byTooltip('Personel Ekle'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('staffFirstNameField')), 'Ali');
+    await tester.enterText(
+        find.byKey(const Key('staffLastNameField')), 'Kurye');
+    await tester.enterText(
+        find.byKey(const Key('staffPhoneField')), '5321234568');
+    await tester.enterText(
+        find.byKey(const Key('staffPasswordField')), 'dogru-sifre-123');
+    await tester.tap(find.byKey(const Key('staffRoleChip-courier')));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets(
+      'ADR-085 stage 5: choosing Kurye asks the pay in the form; a manager '
+      'gets no pool option', (tester) async {
+    await pumpScreen(tester);
+    expect(find.byKey(const Key('courierPayFields')), findsNothing);
+    await openCreateAsCourier(tester);
+
+    expect(find.byKey(const Key('courierPayFields')), findsOneWidget);
+    expect(find.byKey(const Key('courierPayKind')), findsNothing,
+        reason: 'only an admin/owner sets a pool courier');
+    await tester.ensureVisible(find.byKey(const Key('staffCreateSaveButton')));
+    await tester.tap(find.byKey(const Key('staffCreateSaveButton')));
+    await tester.pumpAndSettle();
+    expect(gateway.calls, isEmpty, reason: 'the rates are required');
+
+    await tester.enterText(
+        find.byKey(const Key('courierPerPackageField')), '40');
+    await tester.enterText(
+        find.byKey(const Key('courierHourlyField')), '150,50');
+    await tester.ensureVisible(find.byKey(const Key('staffCreateSaveButton')));
+    await tester.tap(find.byKey(const Key('staffCreateSaveButton')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.calls, ['create:+905321234568']);
+    expect(gateway.lastCourierPay?.kind, CourierPayKind.shop);
+    expect(gateway.lastCourierPay?.perPackageMinorUnits, 4000);
+    expect(gateway.lastCourierPay?.hourlyMinorUnits, 15050);
+  });
+
+  testWidgets(
+      'ADR-085 stage 5: an admin adds a pool courier (per package only)',
+      (tester) async {
+    await pumpScreen(tester, session: _admin);
+    await openCreateAsCourier(tester);
+    await tester.ensureVisible(find.text('Havuz Kuryesi'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Havuz Kuryesi'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('courierHourlyField')), findsNothing);
+    await tester.enterText(
+        find.byKey(const Key('courierPerPackageField')), '90');
+    await tester.ensureVisible(find.byKey(const Key('staffCreateSaveButton')));
+    await tester.tap(find.byKey(const Key('staffCreateSaveButton')));
+    await tester.pumpAndSettle();
+
+    expect(gateway.lastCourierPay?.kind, CourierPayKind.pool);
+    expect(gateway.lastCourierPay?.hourlyMinorUnits, isNull);
+  });
+
+  testWidgets(
+      'ADR-085 stage 5: editing a courier shows its rate; a change is saved '
+      'as a new rate, an unchanged form saves nothing', (tester) async {
+    await pumpScreen(tester, courierRate: shopRate, seed: [
+      StaffMember(
+        id: 'uid-courier',
+        authUid: 'uid-courier',
+        displayName: 'Ali Kurye',
+        roles: const {StaffRole.courier},
+        branchAccess: const {'branch-1'},
+        status: StaffMemberStatus.active,
+        createdAt: DateTime(2026, 11, 15),
+        revision: 1,
+      ),
+    ]);
+
+    await tester.tap(find.byKey(const Key('staffActions-uid-courier')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rol ve Ücreti Düzenle'));
+    await tester.pumpAndSettle();
+    expect(payGateway.calls, ['currentRate:uid-courier']);
+    expect(
+        tester
+            .widget<TextFormField>(
+                find.byKey(const Key('courierPerPackageField')))
+            .controller
+            ?.text,
+        '40');
+
+    await tester.tap(find.byKey(const Key('staffRolesSaveButton')));
+    await tester.pumpAndSettle();
+    expect(payGateway.calls, ['currentRate:uid-courier'],
+        reason: 'nothing changed');
+    expect(gateway.calls, isEmpty);
+
+    await tester.tap(find.byKey(const Key('staffActions-uid-courier')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rol ve Ücreti Düzenle'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const Key('courierPerPackageField')), '45');
+    await tester.tap(find.byKey(const Key('staffRolesSaveButton')));
+    await tester.pumpAndSettle();
+    expect(payGateway.calls.last, 'setRate:uid-courier');
+    expect(payGateway.lastInput?.perPackageMinorUnits, 4500);
+    expect(gateway.calls, isEmpty, reason: 'the roles did not change');
+    expect(find.text('Ücret güncellendi.'), findsOneWidget);
   });
 }

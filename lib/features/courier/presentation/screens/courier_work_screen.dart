@@ -12,6 +12,7 @@ import '../../data/courier_work_repository.dart';
 import '../../domain/work/courier_contact_plan.dart';
 import '../../domain/work/courier_work_models.dart';
 import '../providers/courier_work_providers.dart';
+import '../widgets/courier_earnings_tab.dart';
 
 /// 2026-11-12 (Faz 3b) — "Kurye Ekranım", the server-backed courier app
 /// (ADR-077). Opens for a signed-in staff account whose active role is
@@ -22,6 +23,7 @@ import '../providers/courier_work_providers.dart';
 ///   (the customer phone is shown only until delivery — KVKK).
 /// - **Havuz** / **Taleplerim** — external (`pool`) couriers only: open
 ///   packages of their districts ("Talep Oluştur") and their own requests.
+/// - **Kazancım** — ADR-085 stage 5: own rate, shift and earnings.
 class CourierWorkScreen extends ConsumerWidget {
   const CourierWorkScreen({super.key, required this.uid, this.onSignOut});
 
@@ -110,6 +112,8 @@ class _CourierWorkTabs extends StatelessWidget {
         const Tab(key: Key('tabPool'), text: 'Havuz'),
         const Tab(key: Key('tabRequests'), text: 'Taleplerim'),
       ],
+      // ADR-085 stage 5 — rate, shift and earnings.
+      const Tab(key: Key('tabEarnings'), text: 'Kazancım'),
     ];
     return DefaultTabController(
       length: tabs.length,
@@ -123,6 +127,7 @@ class _CourierWorkTabs extends StatelessWidget {
               _PoolTab(account: account, scope: scope),
               _RequestsTab(scope: scope),
             ],
+            const CourierEarningsTab(),
           ],
         ),
       ),

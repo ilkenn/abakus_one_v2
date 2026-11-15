@@ -12008,7 +12008,7 @@ Step 5 details (dev project `abakus-one-dev`):
 | 2 | KVKK: customer data removed from the courier projection at "Teslim Ettim"; screenshot block on staff/courier/POS screens (owner and customer app exempt) | Done (2026-11-13), Visual Review Bekleniyor (iOS untested) |
 | 3 | Panel top bar: no DEMO badge, name + role, admin/owner role preview | Done (2026-11-13), Visual Review Bekleniyor |
 | 4 | Courier: "Konuma Git", smart call (own orders: customer; Trendyol/Getir: configurable switchboard + DTMF order code) | Done (2026-11-13), Visual Review Bekleniyor; marketplace part dormant |
-| 5 | Courier pay rates (per courier, effective-dated), earnings view, manager-approved shifts — data model draft first | Not started |
+| 5 | Courier pay rates (per courier, effective-dated), earnings view, manager-approved shifts — data model draft first | Done (2026-11-15), Visual Review Bekleniyor |
 
 Stage 0 details:
 
@@ -12098,3 +12098,48 @@ Stage 4 details:
 - Tests: `courier_contact_plan_test.dart` (call plans incl. DTMF encoding, navigation by pin/address, KVKK
   after delivery, parsing); pure server tests for the pin and the marketplace fields; the courier widget
   test opens Yandex by address.
+
+Stage 5 details (data model approved 2026-11-15):
+
+- Server (`functions/src/courierPay.ts`, all collections server-written; client access stays denied by the
+  default rule):
+  - `courierPayProfiles/{org}_{uid}`: append-only, effective-dated rate versions per courier staff
+    account. Shop = hourly + per package; pool = per package only. A start date is today (Istanbul) at
+    the earliest, at most a year ahead. The rate in force is the latest start on or before the day; a
+    same-day re-entry wins.
+  - `courierShifts` + `courierShiftPointers`: "Vardiya Başlat" → manager approves, corrects (reason
+    required) or rejects → "Vardiya Bitir" → manager approves or corrects. Pressed and approved times are
+    both kept. Shop couriers with an hourly rate only; one open shift per courier.
+  - `courierEarnings`: one line per package, written by `settleCourierReturn` when the cashier closes the
+    order (`pkg-<orderId>`), and one per closed shift (`shift-<shiftId>`): approved whole minutes ×
+    hourly rate / 60, rounded to the kuruş, at the rate in force on the shift's start day. The rate is
+    copied into the line.
+  - Callables: `setCourierPayRate`, `getCourierPayProfile`, `courierStartShift`, `courierEndShift`,
+    `listCourierShifts`, `reviewCourierShift`, `getCourierEarnings`, `getMyCourierPay`;
+    `createStaffAccount` takes an optional `courierPay`.
+  - Who may do what: a shop courier's rate is set by a manager of its branches or an admin/owner; a pool
+    courier's by an admin/owner only. Shifts are reviewed by a manager of the shift's branch or an
+    admin/owner; nobody reviews their own. Earnings: the courier its own, a manager its branches, an
+    admin/owner the organization.
+  - Indexes: `courierEarnings` (organizationId, earnedDate) and (staffUid, earnedDate); `courierShifts`
+    (organizationId, status).
+- App:
+  - "Personel Ekle": choosing Kurye asks the pay in the form (Dükkan/Havuz; only an admin/owner sees
+    Havuz). "Rol ve Ücreti Düzenle" shows the rate in force and saves a change as a new version, from
+    today or a chosen later day.
+  - Courier app: a "Kazancım" tab with the rate, the shift card (shop couriers) and today / this week /
+    this month totals and lines.
+  - Panel: "Kurye Vardiya & Kazanç" (manager/admin): "Vardiya Onayları" (Onayla / Saati Düzelt /
+    Reddet) and "Kazançlar" per courier.
+- Known limits:
+  - pay is keyed by the courier's sign-in account: a courier record with no linked account earns no
+    package lines;
+  - a package settled before a rate existed is not paid later (no back-dating, by decision);
+  - a manager cannot close a shift the courier forgot to end — the courier must press "Vardiya Bitir";
+  - the old in-memory compensation screens (`manager_courier_compensation_screen.dart` and its
+    repositories) are untouched and unused by this flow.
+- Tests: `courierPayPure.test.ts` (6), `courierPay.test.ts` (4 emulator: form rate and pool rule,
+  versions/back-dating/branch scope, the whole shift flow with earnings visibility, pool couriers),
+  `courierSettlement.test.ts` (package lines at the rate in force; none without a profile),
+  `courier_pay_models_test.dart`, `courier_pay_screens_test.dart`, `staff_management_screen_test.dart`
+  (pay in the add/edit form).

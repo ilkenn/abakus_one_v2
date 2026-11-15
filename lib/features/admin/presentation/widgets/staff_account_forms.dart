@@ -5,7 +5,9 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../auth/domain/phone_number.dart';
+import '../../../courier/domain/pay/courier_pay_models.dart';
 import '../../../pos/domain/authorization/staff_role.dart';
+import 'courier_pay_fields.dart';
 
 /// ADR-085 (revision) — Turkish names of the staff roles, for the panel.
 String staffRoleLabel(StaffRole role) => switch (role) {
@@ -45,6 +47,7 @@ class NewStaffAccountInput {
     required this.password,
     required this.roles,
     required this.branchId,
+    this.courierPay,
   });
 
   final String firstName;
@@ -53,6 +56,9 @@ class NewStaffAccountInput {
   final String password;
   final Set<StaffRole> roles;
   final String branchId;
+
+  /// ADR-085 stage 5 — the courier's first rate (courier role only).
+  final CourierPayRateInput? courierPay;
 }
 
 String? _passwordError(String? value) =>
@@ -66,17 +72,22 @@ class StaffAccountCreateSheet extends StatefulWidget {
     required this.assignableRoles,
     required this.branchIds,
     required this.initialBranchId,
+    this.allowPoolCourier = false,
   });
 
   final List<StaffRole> assignableRoles;
   final List<String> branchIds;
   final String initialBranchId;
 
+  /// Admin/owner: may add a pool courier (ADR-085 stage 5).
+  final bool allowPoolCourier;
+
   static Future<NewStaffAccountInput?> show(
     BuildContext context, {
     required List<StaffRole> assignableRoles,
     required List<String> branchIds,
     required String initialBranchId,
+    bool allowPoolCourier = false,
   }) {
     return showModalBottomSheet<NewStaffAccountInput>(
       context: context,
@@ -86,6 +97,7 @@ class StaffAccountCreateSheet extends StatefulWidget {
         assignableRoles: assignableRoles,
         branchIds: branchIds,
         initialBranchId: initialBranchId,
+        allowPoolCourier: allowPoolCourier,
       ),
     );
   }
@@ -103,10 +115,15 @@ class _StaffAccountCreateSheetState extends State<StaffAccountCreateSheet> {
   final _password = TextEditingController();
   final Set<StaffRole> _roles = {};
   late String _branchId = widget.initialBranchId;
+  late final CourierPayDraft _pay =
+      CourierPayDraft(allowPool: widget.allowPoolCourier);
   bool _rolesError = false;
+
+  bool get _isCourier => _roles.contains(StaffRole.courier);
 
   @override
   void dispose() {
+    _pay.dispose();
     _firstName.dispose();
     _lastName.dispose();
     _phone.dispose();
@@ -125,6 +142,7 @@ class _StaffAccountCreateSheetState extends State<StaffAccountCreateSheet> {
       password: _password.text,
       roles: Set.of(_roles),
       branchId: _branchId,
+      courierPay: _isCourier ? _pay.toInput() : null,
     ));
   }
 
@@ -231,6 +249,10 @@ class _StaffAccountCreateSheetState extends State<StaffAccountCreateSheet> {
                   style:
                       AppTypography.bodySmall.copyWith(color: AppColors.error),
                 ),
+              ],
+              if (_isCourier) ...[
+                const SizedBox(height: AppSpacing.lg),
+                CourierPayFields(draft: _pay),
               ],
               if (widget.branchIds.length > 1) ...[
                 const SizedBox(height: AppSpacing.lg),
@@ -349,48 +371,132 @@ class _StaffPasswordDialogState extends State<_StaffPasswordDialog> {
   }
 }
 
-/// Changes a staff member's roles. Returns the new set, or `null`.
-Future<Set<StaffRole>?> showStaffRolesDialog(
+/// What the staff edit form returns: the roles, and a new courier rate
+/// when one was typed (courier role only, and only if it changed).
+class StaffEditResult {
+  const StaffEditResult({required this.roles, this.courierPay});
+
+  final Set<StaffRole> roles;
+  final CourierPayRateInput? courierPay;
+}
+
+/// Changes a staff member's roles and — for a courier — its pay (ADR-085
+/// stage 5: a new rate version from today or a later day). Returns `null`
+/// when cancelled.
+Future<StaffEditResult?> showStaffRolesDialog(
   BuildContext context, {
   required String memberName,
   required Set<StaffRole> current,
   required List<StaffRole> assignableRoles,
+  CourierPayRate? currentCourierRate,
+  bool allowPoolCourier = false,
 }) {
-  final selected = <StaffRole>{...current.where(assignableRoles.contains)};
-  return showDialog<Set<StaffRole>>(
+  return showDialog<StaffEditResult>(
     context: context,
-    builder: (dialogContext) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text('$memberName — Rolleri Değiştir'),
-        content: Wrap(
-          spacing: AppSpacing.sm,
-          runSpacing: AppSpacing.sm,
-          children: [
-            for (final role in assignableRoles)
-              FilterChip(
-                key: Key('staffEditRoleChip-${role.name}'),
-                label: Text(staffRoleLabel(role)),
-                selected: selected.contains(role),
-                onSelected: (value) => setState(() {
-                  value ? selected.add(role) : selected.remove(role);
-                }),
-              ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('İptal'),
-          ),
-          ElevatedButton(
-            key: const Key('staffRolesSaveButton'),
-            onPressed: selected.isEmpty
-                ? null
-                : () => Navigator.of(dialogContext).pop(Set.of(selected)),
-            child: const Text('Kaydet'),
-          ),
-        ],
-      ),
+    builder: (_) => _StaffEditDialog(
+      memberName: memberName,
+      current: current,
+      assignableRoles: assignableRoles,
+      currentCourierRate: currentCourierRate,
+      allowPoolCourier: allowPoolCourier,
     ),
   );
+}
+
+class _StaffEditDialog extends StatefulWidget {
+  const _StaffEditDialog({
+    required this.memberName,
+    required this.current,
+    required this.assignableRoles,
+    required this.currentCourierRate,
+    required this.allowPoolCourier,
+  });
+
+  final String memberName;
+  final Set<StaffRole> current;
+  final List<StaffRole> assignableRoles;
+  final CourierPayRate? currentCourierRate;
+  final bool allowPoolCourier;
+
+  @override
+  State<_StaffEditDialog> createState() => _StaffEditDialogState();
+}
+
+class _StaffEditDialogState extends State<_StaffEditDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final Set<StaffRole> _selected = {
+    ...widget.current.where(widget.assignableRoles.contains),
+  };
+  late final CourierPayDraft _pay = CourierPayDraft(
+    initial: widget.currentCourierRate,
+    allowPool: widget.allowPoolCourier,
+    withEffectiveDate: true,
+  );
+
+  @override
+  void dispose() {
+    _pay.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    final input = _selected.contains(StaffRole.courier) ? _pay.toInput() : null;
+    Navigator.of(context).pop(StaffEditResult(
+      roles: Set.of(_selected),
+      courierPay: input != null && input.differsFrom(widget.currentCourierRate)
+          ? input
+          : null,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isCourier = _selected.contains(StaffRole.courier);
+    return AlertDialog(
+      title: Text('${widget.memberName} — '
+          '${isCourier ? 'Rol ve Ücret' : 'Rolleri Değiştir'}'),
+      content: SingleChildScrollView(
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
+                children: [
+                  for (final role in widget.assignableRoles)
+                    FilterChip(
+                      key: Key('staffEditRoleChip-${role.name}'),
+                      label: Text(staffRoleLabel(role)),
+                      selected: _selected.contains(role),
+                      onSelected: (value) => setState(() {
+                        value ? _selected.add(role) : _selected.remove(role);
+                      }),
+                    ),
+                ],
+              ),
+              if (isCourier) ...[
+                const SizedBox(height: AppSpacing.lg),
+                CourierPayFields(draft: _pay),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('İptal'),
+        ),
+        ElevatedButton(
+          key: const Key('staffRolesSaveButton'),
+          onPressed: _selected.isEmpty ? null : _save,
+          child: const Text('Kaydet'),
+        ),
+      ],
+    );
+  }
 }

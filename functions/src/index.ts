@@ -113,6 +113,17 @@ export { submitStaffDeliveryOrder } from "./submitStaffDeliveryOrder";
 export { searchPosCustomers } from "./posCustomerBook";
 // 2026-11-11 — Faz 2b: courier return settlement (kapıda tahsilat → kasa / Z raporu).
 export { getCourierSettlementPreview, settleCourierReturn } from "./courierSettlement";
+// ADR-085 stage 5 — courier pay rates, shifts and earnings.
+export {
+  setCourierPayRate,
+  getCourierPayProfile,
+  courierStartShift,
+  courierEndShift,
+  listCourierShifts,
+  reviewCourierShift,
+  getCourierEarnings,
+  getMyCourierPay,
+} from "./courierPay";
 // 2026-11-12 (Faz 3a) — external-courier delivery pool: "Havuza Gönder" /
 // "Havuzdan Geri Al", the courier's "Talep Oluştur", staff approve/reject,
 // the courier's "Yola Çıktım" / "Teslim Ettim", and the trigger keeping the

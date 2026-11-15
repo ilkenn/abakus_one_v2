@@ -10,6 +10,7 @@ import { DELIVERY_PAYMENT_METHOD_CATALOG } from "./deliveryPaymentMethodCatalog"
 import { CASH_SESSIONS_COLLECTION, CASH_MOVEMENTS_COLLECTION, type CashSessionDoc, type CashMovementDoc } from "./cashDomain";
 import { applyDeliveryLifecycleTransition, writeDeliveryOrderStatusChangeAuditEvent } from "./deliveryOrderLifecycle";
 import { STAFF_DELIVERY_PAYMENT_METHOD_IDS } from "./submitStaffDeliveryOrder";
+import { courierPayProfileRef, writePackageEarnings, type CourierPayProfileDoc } from "./courierPay";
 
 /**
  * 2026-11-11 — Faz 2b: "Kurye Döndü — Hesap Kapat". When a courier comes back,
@@ -307,6 +308,11 @@ export const settleCourierReturn = onCall({ enforceAppCheck: shouldEnforceAppChe
       }
     }
 
+    // ADR-085 stage 5 — the courier's pay profile (by its linked sign-in
+    // account), for the package earning lines written below.
+    const payUid = typeof courier.authUid === "string" && courier.authUid.length > 0 ? courier.authUid : null;
+    const payProfileSnap = payUid ? await tx.get(courierPayProfileRef(db, organizationId, payUid)) : null;
+
     const lines = open.map((o) => ({
       orderId: o.id,
       amountDueMinorUnits: orderAmountDueMinorUnits(o.order),
@@ -404,6 +410,14 @@ export const settleCourierReturn = onCall({ enforceAppCheck: shouldEnforceAppChe
       createdByStaffUid: uid,
     };
     tx.set(settlementRef, settlement);
+    // ADR-085 stage 5 — a package is earned when the cashier closes it.
+    const earningLines = writePackageEarnings({
+      tx, db,
+      profile: payProfileSnap?.exists ? (payProfileSnap.data() as CourierPayProfileDoc) : null,
+      organizationId, branchId, courierId, courierName: settlement.courierName,
+      orders: open.map((o) => ({ orderId: o.id, orderNumber: String(o.order.orderNumber ?? o.id) })),
+      now,
+    });
     writeAuditEvent({
       tx, db, eventId: `courierSettlement-${settlementId}`, organizationId, branchId,
       type: "courierSettlement.closed", targetRef: settlementRef.path,
@@ -421,6 +435,7 @@ export const settleCourierReturn = onCall({ enforceAppCheck: shouldEnforceAppChe
       expectedCashMinorUnits: totals.expectedCashMinorUnits,
       differenceMinorUnits: totals.differenceMinorUnits,
       totalCollectedMinorUnits: totals.totalCollectedMinorUnits,
+      earningLines,
     };
   });
 });

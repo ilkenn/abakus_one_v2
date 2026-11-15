@@ -294,7 +294,7 @@ export const withdrawOrderFromPool = onCall({ enforceAppCheck: shouldEnforceAppC
  * The calling courier's account (`courierAccounts/{uid}`, written by
  * `setCourier` when an auth account is linked) and courier doc.
  */
-async function requireCourierAccount(request: CallableRequest, tx: Transaction, db: Firestore) {
+export async function requireCourierAccount(request: CallableRequest, tx: Transaction, db: Firestore) {
   if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
   const uid = request.auth.uid;
   const accountSnap = await tx.get(db.collection(COURIER_ACCOUNTS_COLLECTION).doc(uid));

@@ -1,6 +1,30 @@
 {
   "indexes": [
     {
+      "collectionGroup": "courierEarnings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "earnedDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "courierEarnings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "staffUid", "order": "ASCENDING" },
+        { "fieldPath": "earnedDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "courierShifts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "posCustomers",
       "queryScope": "COLLECTION",
       "fields": [

@@ -22,6 +22,7 @@ import {
   resyncClaimsForUid,
 } from "./staffMembership";
 import type { MembershipDoc, MembershipRole, MembershipStatus } from "./staffMembership";
+import { appendCourierPayRate, istanbulDate, parseCourierPayRateInput } from "./courierPay";
 
 /**
  * ADR-085 (revised 2026-11-13) — staff accounts are created and managed
@@ -163,10 +164,18 @@ export const createStaffAccount = onCall(
     const password = requirePassword(data.password);
     const roles = requireRoles(data.roles);
     const branchAccess = requireBranches(data.branchAccess);
+    // ADR-085 stage 5 — a courier's first pay rate, from the same form.
+    const courierPay = data.courierPay === undefined || data.courierPay === null
+      ? null
+      : parseCourierPayRateInput(data.courierPay);
+    if (courierPay && !roles.includes("courier")) invalid("courierPay is only for a courier.");
 
     if (request.auth.token?.phone_number === phoneNumber) denied("You cannot add your own phone number.");
     const scope = await resolveStaffScope(request, organizationId);
     assertWithinScope(scope, { roles, branchAccess });
+    if (courierPay?.courierKind === "pool" && scope.kind !== "organization") {
+      throw new HttpsError("permission-denied", "Only an admin or owner can set a pool courier's pay.", { code: "courierPay/pool-needs-admin" });
+    }
     await assertBranchesBelongToOrganization(organizationId, branchAccess);
 
     const db = getFirestore();
@@ -213,7 +222,15 @@ export const createStaffAccount = onCall(
       if (snap.exists) {
         throw new HttpsError("already-exists", "This phone number already belongs to a staff member of this organization.");
       }
+      const payRate = courierPay
+        ? await appendCourierPayRate({
+          tx, db, organizationId, staffUid: uid, branchIds: branchAccess, input: courierPay,
+          effectiveFromDate: istanbulDate(now.getTime()), actorUid: request.auth!.uid,
+          actorRoles: callerRoles(request, organizationId), now: Timestamp.fromDate(now), scope,
+        })
+        : null;
       tx.set(ref, doc);
+      payRate?.write();
       writeAuditEvent({
         tx,
         db,

@@ -21598,3 +21598,23 @@ three points; supersedes decisions 2 and 5 above and the invite update):**
 - **Dormant until marketplace orders exist.** The marketplace fields are read from the order
   (`marketplaceProvider`, `marketplaceOrderCode`). A future marketplace integration must write them there.
   `OrderChannel` itself was not extended.
+
+**Update 2026-11-15 — staff package, stage 5 (data model and five decisions approved by the product
+owner):**
+
+- **Rates are per courier staff account, effective-dated and append-only**
+  (`courierPayProfiles/{org}_{uid}`). Shop couriers: hourly + per package; pool couriers: per package
+  only. A new rate starts today at the earliest — no back-dating.
+- **Who sets a rate:** a shop courier's — a manager of its branches, or an admin/owner; a pool courier's —
+  an admin/owner only. The first rate is asked in "Personel Ekle" when the role is Kurye; later ones in the
+  edit form.
+- **A package is earned at settlement** (`settleCourierReturn`, when the cashier closes the order), so a
+  cancelled or uncollected package is never paid.
+- **Shifts are approved by a manager:** the courier presses start/end; the manager approves, corrects the
+  time (reason required) or rejects a start. Pressed and approved times are both kept. Pay = approved whole
+  minutes × hourly rate / 60, rounded to the kuruş only.
+- **Earnings lines copy the rate in force**, so a later rate change never alters a written line.
+- **Visibility:** a courier sees its own earnings, a manager its branches', an admin/owner the whole
+  organization — enforced by the callables; clients cannot read the collections directly.
+- **Keyed by the sign-in account, not the courier record:** a courier record without a linked account
+  earns nothing until one is linked.
