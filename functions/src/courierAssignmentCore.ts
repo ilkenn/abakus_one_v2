@@ -49,6 +49,8 @@ export interface ApplyCourierAssignmentParams {
   /** The order's current courier when it is being moved to [courierId]. */
   previousCourier?: { ref: DocumentReference; data: DocumentData } | null;
   now: Timestamp;
+  /** ADR-085 stage 6C-1 — who ticked "Eksiksiz Hazırlandı" at "Kuryeye Ver". */
+  packingVerifiedByUid?: string | null;
 }
 
 export function applyCourierAssignment(p: ApplyCourierAssignmentParams): { trackingToken: string; status: OrderStatus } {
@@ -63,6 +65,7 @@ export function applyCourierAssignment(p: ApplyCourierAssignmentParams): { track
       assignedCourierId: p.courierId,
       courierType: p.courier.type ?? "internal",
       trackingToken,
+      ...(p.packingVerifiedByUid ? { packingVerifiedAt: p.now, packingVerifiedByUid: p.packingVerifiedByUid } : {}),
     },
     { merge: true },
   );

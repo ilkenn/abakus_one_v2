@@ -64,6 +64,7 @@ class Order {
     this.poolStatus,
     this.estimatedDeliveryMinutes,
     this.courierDeparted = false,
+    this.packingVerified = false,
     this.courierReportedDelivered = false,
     this.courierReportedPaymentMethodId,
     this.courierType,
@@ -253,6 +254,10 @@ class Order {
 
   /// Faz 3a — the courier marked "Yola Çıktım" (`departedAt` on the order).
   final bool courierDeparted;
+
+  /// ADR-085 stage 6C-1 — "Eksiksiz Hazırlandı" was ticked when the package
+  /// was handed to the courier (server-written only).
+  final bool packingVerified;
 
   /// Faz 3a — the courier marked "Teslim Ettim": the order stays
   /// `outForDelivery` ("Teslim Edildi — Mutabakat Bekliyor") until the POS
@@ -502,6 +507,7 @@ class Order {
     String? poolStatus,
     int? estimatedDeliveryMinutes,
     bool? courierDeparted,
+    bool? packingVerified,
     bool? courierReportedDelivered,
     String? courierReportedPaymentMethodId,
     CourierType? courierType,
@@ -557,6 +563,7 @@ class Order {
       estimatedDeliveryMinutes:
           estimatedDeliveryMinutes ?? this.estimatedDeliveryMinutes,
       courierDeparted: courierDeparted ?? this.courierDeparted,
+      packingVerified: packingVerified ?? this.packingVerified,
       courierReportedDelivered:
           courierReportedDelivered ?? this.courierReportedDelivered,
       courierReportedPaymentMethodId:

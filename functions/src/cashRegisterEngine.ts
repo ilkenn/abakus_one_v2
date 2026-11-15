@@ -735,6 +735,33 @@ export const closeCashSession = onCall({ enforceAppCheck: shouldEnforceAppCheck(
       );
     }
 
+    // ADR-085 stage 6C-1 — no day end while courier work is still open:
+    // a package not yet settled at the till, a courier's cancellation
+    // request waiting in the Onay Kutusu, or a payment-method change not
+    // yet reviewed. Each one is listed.
+    const [openPackagesSnap, pendingCancellationsSnap, pendingChangesSnap] = await Promise.all([
+      tx.get(db.collection("orders").where("branchId", "==", branchId).where("channel", "==", "delivery").where("status", "==", "outForDelivery")),
+      tx.get(db.collection("courierCancellationRequests").where("branchId", "==", branchId).where("status", "==", "pending")),
+      tx.get(db.collection("courierPaymentChanges").where("branchId", "==", branchId).where("status", "==", "pendingReview")),
+    ]);
+    const openCourierPackages = openPackagesSnap.docs.map((d) => ({
+      orderId: d.id, orderNumber: String(d.data().orderNumber ?? d.id),
+      delivered: Boolean(d.data().courierReportedDeliveredAt),
+    }));
+    const pendingCancellations = pendingCancellationsSnap.docs.map((d) => ({
+      orderId: d.id, orderNumber: String(d.data().orderNumber ?? d.id), courierName: String(d.data().courierName ?? ""),
+    }));
+    const pendingPaymentChanges = pendingChangesSnap.docs.map((d) => ({
+      orderId: d.id, orderNumber: String(d.data().orderNumber ?? d.id), courierName: String(d.data().courierName ?? ""),
+    }));
+    if (openCourierPackages.length + pendingCancellations.length + pendingPaymentChanges.length > 0) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Kurye işlemleri açık — gün sonu kapanışından önce tamamlanmalı.",
+        { code: "courierWorkOpen", openCourierPackages, pendingCancellations, pendingPaymentChanges },
+      );
+    }
+
     const now = Timestamp.now();
     tx.update(sessionRef, { status: "closed", closedByStaffUid: uid, closedAt: now, updatedAt: now, version: session.version + 1 });
     writeAuditEvent({

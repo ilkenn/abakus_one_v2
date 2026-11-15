@@ -18,6 +18,30 @@ class CashRegisterGatewayException implements Exception {
   String toString() => 'CashRegisterGatewayException($code): $message';
 }
 
+/// ADR-085 stage 6C-1 — the day-end lock (`closeCashSession`,
+/// `courierWorkOpen`): every courier package, cancellation request and
+/// payment-method change still open, one per line, in Turkish. `null` for
+/// any other refusal.
+String? courierWorkOpenMessage(Map<String, dynamic>? details) {
+  if (details == null || details['code'] != 'courierWorkOpen') return null;
+  List<Map<String, dynamic>> rows(String key) => [
+        for (final row in (details[key] as List? ?? const []))
+          Map<String, dynamic>.from(row as Map),
+      ];
+  final lines = <String>[
+    'Gün sonu yapılamaz — önce şu kurye işlemleri tamamlanmalı:',
+    for (final p in rows('openCourierPackages'))
+      '• ${p['orderNumber']}: kasada mutabakatı yapılmadı'
+          '${p['delivered'] == true ? ' (teslim edildi)' : ' (kurye yolda)'}',
+    for (final c in rows('pendingCancellations'))
+      "• ${c['orderNumber']}: ${c['courierName']} iptal talebi Onay Kutusu'nda bekliyor",
+    for (final c in rows('pendingPaymentChanges'))
+      '• ${c['orderNumber']}: ${c['courierName']} ödeme yöntemi değişikliği '
+          "Kurye Denetimi'nde incelenmedi",
+  ];
+  return lines.join('\n');
+}
+
 class CashSessionOpenResult {
   const CashSessionOpenResult({
     required this.sessionId,
@@ -373,12 +397,15 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
   final RestCallableClient _restClient;
 
   Never _rethrow(functions.FirebaseFunctionsException error) {
+    final details = error.details is Map
+        ? Map<String, dynamic>.from(error.details as Map)
+        : null;
     throw CashRegisterGatewayException(
       error.code,
-      error.message ?? 'Kasa işlemi gerçekleştirilemedi.',
-      error.details is Map
-          ? Map<String, dynamic>.from(error.details as Map)
-          : null,
+      courierWorkOpenMessage(details) ??
+          error.message ??
+          'Kasa işlemi gerçekleştirilemedi.',
+      details,
     );
   }
 
@@ -397,7 +424,11 @@ class FirebaseCashRegisterGateway implements CashRegisterGateway {
       try {
         return await _restClient.call(name, data);
       } on RestCallableException catch (error) {
-        throw CashRegisterGatewayException(error.code, error.message);
+        throw CashRegisterGatewayException(
+          error.code,
+          courierWorkOpenMessage(error.details) ?? error.message,
+          error.details,
+        );
       }
     }
     final callable = functions.FirebaseFunctions.instance.httpsCallable(name);

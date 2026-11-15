@@ -11,6 +11,7 @@ import { CASH_SESSIONS_COLLECTION, CASH_MOVEMENTS_COLLECTION, type CashSessionDo
 import { applyDeliveryLifecycleTransition, writeDeliveryOrderStatusChangeAuditEvent } from "./deliveryOrderLifecycle";
 import { STAFF_DELIVERY_PAYMENT_METHOD_IDS } from "./submitStaffDeliveryOrder";
 import { courierPayProfileRef, writePackageEarnings, type CourierPayProfileDoc } from "./courierPay";
+import { cashLimitAlertRef, lateAlertRef, resolveAlert } from "./courierFieldAlerts";
 
 /**
  * 2026-11-11 — Faz 2b: "Kurye Döndü — Hesap Kapat". When a courier comes back,
@@ -386,13 +387,29 @@ export const settleCourierReturn = onCall({ enforceAppCheck: shouldEnforceAppChe
       });
     }
 
+    // ADR-085 stage 6C-1 — the courier now carries only the cash of the
+    // packages it still holds for another branch; the alerts close.
+    const keptCashMinorUnits = orderSnaps
+      .filter((snap, i) => snap.exists && keptOrderIds.includes(activeOrderIds[i]))
+      .map((snap) => snap.data()!)
+      .filter((o) => o.courierReportedPaymentMethodId === "cash")
+      .reduce((sum, o) => sum + orderAmountDueMinorUnits(o), 0);
     tx.set(courierRef, {
       activeOrderIds: keptOrderIds,
       dispatchStatus: keptOrderIds.length === 0 ? "available" : "delivering",
       returnedAt: now,
       updatedAt: now,
       revision: (Number(courier.revision) || 1) + 1,
+      carriedCashMinorUnits: keptCashMinorUnits,
+      cashLimitExceededAt: null,
     }, { merge: true });
+    if (payUid) {
+      tx.set(db.collection("courierAccounts").doc(payUid), {
+        carriedCashMinorUnits: keptCashMinorUnits, cashLimitExceeded: false,
+      }, { merge: true });
+    }
+    if (courier.cashLimitExceededAt) resolveAlert(tx, cashLimitAlertRef(db, courierId), now);
+    for (const o of open) if (o.order.courierLateAt) resolveAlert(tx, lateAlertRef(db, o.id), now);
 
     const settlement: CourierSettlementDoc = {
       organizationId, branchId, courierId,

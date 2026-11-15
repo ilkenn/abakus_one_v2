@@ -127,6 +127,7 @@ async function setupFixture(unitPriceMinorUnits = 15000) {
 
 
 const SETTLE_URL = fn("settleCourierReturn");
+const CLOSE_URL = fn("closeCashSession");
 const PREVIEW_URL = fn("getCourierSettlementPreview");
 const DAILY_REVENUE_URL = fn("getDailyRevenueSummary");
 const DELIVERY_URL = fn("submitStaffDeliveryOrder");
@@ -378,4 +379,55 @@ test("ADR-085 stage 5: settling writes one package earning per order at the rate
   assert.strictEqual(plain.httpStatus, 200, JSON.stringify(plain.body));
   assert.strictEqual(plain.body.result!.earningLines, 0);
   assert.strictEqual((await db().collection("courierEarnings").doc(`pkg-${c}`).get()).exists, false);
+});
+
+test("ADR-085 stage 6C-1: settling resets the carried cash and closes the cash-limit alert", async () => {
+  const s = await setup();
+  const order = await outForDeliveryOrder(s.f, s.courierId, "cash");
+  await db().collection("couriers").doc(s.courierId).update({
+    carriedCashMinorUnits: 400000, cashLimitExceededAt: admin.firestore.Timestamp.now(),
+  });
+  await db().collection("operationalAlerts").doc(`cashLimit-${s.courierId}`).set({
+    organizationId: s.f.organizationId, branchId: s.f.branchId, type: "courierCashLimit", status: "open",
+  });
+  const { httpStatus, body } = await callCallable(SETTLE_URL, settleRequest(s, [{ orderId: order, paymentMethodId: "cash" }], 10000), s.f.staff.idToken);
+  assert.strictEqual(httpStatus, 200, JSON.stringify(body));
+  const courier = (await db().collection("couriers").doc(s.courierId).get()).data()!;
+  assert.strictEqual(courier.carriedCashMinorUnits, 0);
+  assert.strictEqual(courier.cashLimitExceededAt, null);
+  assert.strictEqual((await db().collection("operationalAlerts").doc(`cashLimit-${s.courierId}`).get()).data()!.status, "resolved");
+});
+
+test("ADR-085 stage 6C-1: no day end while a courier package, a cancellation request or a payment change is open", async () => {
+  const s = await setup();
+  await db().collection("cashSessions").doc(s.cashSessionId).update({ status: "approved" });
+  const close = () => callCallable(CLOSE_URL, {
+    organizationId: s.f.organizationId, branchId: s.f.branchId, deviceId: s.f.deviceId, deviceSessionId: s.f.deviceSessionId,
+    sessionId: s.cashSessionId,
+  }, s.f.staff.idToken);
+
+  const order = await outForDeliveryOrder(s.f, s.courierId, "cash");
+  await db().collection("courierCancellationRequests").doc("req-x").set({
+    organizationId: s.f.organizationId, branchId: s.f.branchId, orderNumber: "DL-X", courierName: "Mehmet", status: "pending",
+  });
+  await db().collection("courierPaymentChanges").doc("chg-y").set({
+    organizationId: s.f.organizationId, branchId: s.f.branchId, orderNumber: "DL-Y", courierName: "Mehmet", status: "pendingReview",
+  });
+  const refused = await close();
+  assert.strictEqual(refused.httpStatus, 400, JSON.stringify(refused.body));
+  const details = (refused.body.error as { details?: Record<string, unknown> } | undefined)?.details ?? {};
+  assert.strictEqual(details.code, "courierWorkOpen");
+  assert.deepStrictEqual((details.openCourierPackages as Array<Record<string, unknown>>).map((p) => p.orderId), [order]);
+  assert.deepStrictEqual((details.pendingCancellations as Array<Record<string, unknown>>).map((p) => p.orderNumber), ["DL-X"]);
+  assert.deepStrictEqual((details.pendingPaymentChanges as Array<Record<string, unknown>>).map((p) => p.orderNumber), ["DL-Y"]);
+
+  // Settling needs the drawer active again; then the count is approved and the day can close.
+  await db().collection("cashSessions").doc(s.cashSessionId).update({ status: "active" });
+  const settled = await callCallable(SETTLE_URL, settleRequest(s, [{ orderId: order, paymentMethodId: "cash" }], 10000), s.f.staff.idToken);
+  assert.strictEqual(settled.httpStatus, 200, JSON.stringify(settled.body));
+  await db().collection("cashSessions").doc(s.cashSessionId).update({ status: "approved" });
+  await db().collection("courierCancellationRequests").doc("req-x").update({ status: "approved" });
+  await db().collection("courierPaymentChanges").doc("chg-y").update({ status: "reviewed" });
+  const closed = await close();
+  assert.strictEqual(closed.httpStatus, 200, JSON.stringify(closed.body));
 });

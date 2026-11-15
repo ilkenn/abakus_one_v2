@@ -188,6 +188,7 @@ abstract final class OrderFirestoreMapper {
       estimatedDeliveryMinutes:
           (data['estimatedDeliveryMinutes'] as num?)?.toInt(),
       courierDeparted: data['departedAt'] != null,
+      packingVerified: data['packingVerifiedAt'] != null,
       courierReportedDelivered: data['courierReportedDeliveredAt'] != null,
       courierReportedPaymentMethodId:
           data['courierReportedPaymentMethodId'] as String?,

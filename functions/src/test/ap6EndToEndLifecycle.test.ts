@@ -348,7 +348,7 @@ test("AP-6 end-to-end: busy/paused takeaway -> KDS isolation -> FIFO courier ret
 
   const batchAssign = await callCallable(
     BATCH_ASSIGN_URL,
-    { orderIds: [consortiumOrderId, clusterOrderB, clusterOrderC], courierId: courierEarly },
+    { packingVerified: true, orderIds: [consortiumOrderId, clusterOrderB, clusterOrderC], courierId: courierEarly },
     manager.idToken,
   );
   assert.strictEqual(batchAssign.httpStatus, 200, JSON.stringify(batchAssign.body));

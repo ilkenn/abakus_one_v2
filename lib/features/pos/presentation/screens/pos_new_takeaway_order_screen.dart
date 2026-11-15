@@ -60,6 +60,8 @@ const _mealCardBrands = [
   (id: 'multinet', label: 'Multinet'),
   (id: 'setcard', label: 'Setcard'),
   (id: 'edenred', label: 'Edenred'),
+  // ADR-085 stage 6C-1 — MetropolCard, as at the door and in the Z report.
+  (id: 'metropol_card', label: 'MetropolCard'),
 ];
 
 /// "Yeni Gel-Al / Paket Servis Siparişi" — 2026-11-11 redesign.

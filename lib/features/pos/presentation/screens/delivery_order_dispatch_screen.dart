@@ -17,6 +17,7 @@ import '../../domain/delivery_neighborhood_clusterer.dart';
 import '../providers/courier_dispatch_dependencies_provider.dart';
 import '../widgets/courier_roster_dialogs.dart';
 import '../widgets/delivery_zones_dialog.dart';
+import '../widgets/packing_check_dialog.dart';
 import '../widgets/print_courier_slip_action.dart';
 import '../providers/pos_workspace_providers.dart';
 import 'pos_courier_settlement_screen.dart';
@@ -131,11 +132,13 @@ class _DeliveryOrderDispatchScreenState
   Future<void> _assignPlannedCourier(Order order) async {
     final courierId = order.plannedCourierId;
     if (courierId == null || _assigningOrderId != null) return;
+    // ADR-085 stage 6C-1 — the ticket is checked line by line first.
+    if (!await showPackingCheckDialog(context, orders: [order])) return;
+    if (!mounted) return;
     setState(() => _assigningOrderId = order.id.value);
     try {
-      await ref
-          .read(courierDispatchGatewayProvider)
-          .assignCourierToOrder(orderId: order.id.value, courierId: courierId);
+      await ref.read(courierDispatchGatewayProvider).assignCourierToOrder(
+          orderId: order.id.value, courierId: courierId, packingVerified: true);
       if (mounted) {
         _snack('${order.orderNumber.value} '
             '${order.plannedCourierName ?? 'kuryeye'} atandı.');
@@ -158,6 +161,46 @@ class _DeliveryOrderDispatchScreenState
   }
 
   String? _poolBusyOrderId;
+
+  /// ADR-085 stage 6C-1 — "Teslim Et": a pool courier collects at the
+  /// counter after "Eksiksiz Hazırlandı"; only then can it depart.
+  Future<void> _handOver(Order order) async {
+    if (_assigningOrderId != null) return;
+    if (!await showPackingCheckDialog(context,
+        orders: [order], confirmLabel: 'Teslim Et')) {
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _assigningOrderId = order.id.value);
+    try {
+      await ref
+          .read(courierDispatchGatewayProvider)
+          .confirmPackageHandover(orderId: order.id.value);
+      if (mounted) {
+        _snack('${order.orderNumber.value} kuryeye teslim edildi.');
+      }
+    } on CourierDispatchException {
+      if (mounted) _snack('Teslim kaydedilemedi. Lütfen tekrar deneyin.');
+    } finally {
+      if (mounted) setState(() => _assigningOrderId = null);
+    }
+  }
+
+  /// "Kurye Ata": the packing check, then the courier picker.
+  Future<void> _openAssignment(Order order) async {
+    if (!await showPackingCheckDialog(context, orders: [order])) return;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => CourierAssignmentDialog(
+        organizationId: widget.organizationId,
+        branchId: widget.branchId,
+        orderId: order.id.value,
+        courierType: order.courierType,
+        packingVerified: true,
+      ),
+    );
+  }
 
   /// 2026-11-12 (Faz 3a) — "Havuza Gönder" / "Havuzdan Geri Al".
   Future<void> _togglePool(Order order) async {
@@ -390,15 +433,8 @@ class _DeliveryOrderDispatchScreenState
                           orderId: order.id.value,
                           isCopy: true,
                         ),
-                        onAssign: (order) => showDialog<void>(
-                          context: context,
-                          builder: (_) => CourierAssignmentDialog(
-                            organizationId: widget.organizationId,
-                            branchId: widget.branchId,
-                            orderId: order.id.value,
-                            courierType: order.courierType,
-                          ),
-                        ),
+                        onAssign: _openAssignment,
+                        onHandOver: _handOver,
                       ),
                   ],
                 ),
@@ -419,12 +455,22 @@ class _DeliveryOrderDispatchScreenState
           : _BatchAssignBar(
               count: _selectedOrderIds.length,
               onAssign: () async {
+                final selected = [
+                  for (final order
+                      in ordersAsync.valueOrNull ?? const <Order>[])
+                    if (_selectedOrderIds.contains(order.id.value)) order,
+                ];
+                if (!await showPackingCheckDialog(context, orders: selected)) {
+                  return;
+                }
+                if (!context.mounted) return;
                 await showDialog<void>(
                   context: context,
                   builder: (_) => CourierAssignmentDialog.batch(
                     organizationId: widget.organizationId,
                     branchId: widget.branchId,
                     orderIds: _selectedOrderIds.toList(),
+                    packingVerified: true,
                   ),
                 );
                 if (mounted) setState(_selectedOrderIds.clear);
@@ -488,6 +534,7 @@ class _ClusterCard extends StatelessWidget {
     required this.isOrderSelectable,
     required this.onSelectionChanged,
     required this.onAssign,
+    required this.onHandOver,
     required this.onAssignPlanned,
     required this.onPrintSlip,
     required this.assigningOrderId,
@@ -509,6 +556,7 @@ class _ClusterCard extends StatelessWidget {
   final bool Function(Order order) isOrderSelectable;
   final void Function(String orderId, bool selected) onSelectionChanged;
   final void Function(Order order) onAssign;
+  final void Function(Order order) onHandOver;
 
   @override
   Widget build(BuildContext context) {
@@ -539,6 +587,7 @@ class _ClusterCard extends StatelessWidget {
                   onSelectionChanged: (selected) =>
                       onSelectionChanged(order.id.value, selected),
                   onAssign: () => onAssign(order),
+                  onHandOver: () => onHandOver(order),
                   onAssignPlanned: () => onAssignPlanned(order),
                   onPrintSlip: () => onPrintSlip(order),
                   isAssigning: assigningOrderId == order.id.value,
@@ -562,6 +611,7 @@ class _DeliveryOrderRow extends StatelessWidget {
     required this.isSelected,
     required this.onSelectionChanged,
     required this.onAssign,
+    required this.onHandOver,
     required this.onAssignPlanned,
     required this.onPrintSlip,
     required this.isAssigning,
@@ -583,10 +633,17 @@ class _DeliveryOrderRow extends StatelessWidget {
   final bool isSelected;
   final ValueChanged<bool> onSelectionChanged;
   final VoidCallback onAssign;
+  final VoidCallback onHandOver;
 
   @override
   Widget build(BuildContext context) {
     final isMarketplace = order.courierType == CourierType.marketplace;
+    // ADR-085 stage 6C-1 — a pool courier collecting at the counter.
+    final awaitsHandOver = order.courierType == CourierType.pool &&
+        order.assignedCourierId != null &&
+        order.status == OrderStatus.outForDelivery &&
+        !order.packingVerified &&
+        !order.courierReportedDelivered;
     // Faz 3a — a package without any courier (assigned or reserved) can be
     // sent to / taken back from the external-courier pool.
     final canUsePool = !isMarketplace &&
@@ -695,6 +752,13 @@ class _DeliveryOrderRow extends StatelessWidget {
                         : const Icon(Icons.two_wheeler_rounded),
                     label: Text('${order.plannedCourierName ?? 'Kurye'} Ata'),
                     onPressed: isAssigning ? null : onAssignPlanned,
+                  ),
+                if (awaitsHandOver)
+                  ElevatedButton.icon(
+                    key: Key('handOver-${order.id.value}'),
+                    icon: const Icon(Icons.inventory_2_outlined),
+                    label: const Text('Teslim Et'),
+                    onPressed: isAssigning ? null : onHandOver,
                   ),
                 TextButton(onPressed: onAssign, child: const Text('Kurye Ata')),
               ],

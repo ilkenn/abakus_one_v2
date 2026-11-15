@@ -11,6 +11,33 @@ import 'package:flutter_test/flutter_test.dart';
 /// ADR-085 stage 6B — "Kurye Denetimi": payment-method changes at the door.
 class _FakeGateway implements CourierOversightGateway {
   List<CourierPaymentChange> changes = const [];
+  List<CourierOperationalAlert> openAlerts = const [];
+  CourierOperationSettings current =
+      (cashLimitMinorUnits: 300000, lateDeliveryMinutes: 35);
+  CourierOperationSettings? saved;
+
+  @override
+  Future<List<CourierOperationalAlert>> alerts({
+    required String organizationId,
+  }) async =>
+      openAlerts;
+
+  @override
+  Future<CourierOperationSettings> settings({
+    required String organizationId,
+    required String branchId,
+  }) async =>
+      current;
+
+  @override
+  Future<void> saveSettings({
+    required String organizationId,
+    required String branchId,
+    required CourierOperationSettings settings,
+  }) async {
+    saved = settings;
+  }
+
   final calls = <String>[];
   String? lastNote;
 

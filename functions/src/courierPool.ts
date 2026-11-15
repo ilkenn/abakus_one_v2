@@ -495,6 +495,10 @@ export const courierMarkDeparted = onCall({ enforceAppCheck: shouldEnforceAppChe
   return db.runTransaction(async (tx) => {
     const { orderRef, order, projectionRef, projectionSnap } = await loadCourierOrder(request, tx, db, orderId);
     if (order.departedAt) return { orderId, duplicate: true };
+    // ADR-085 stage 6C-1 — a pool courier collects at the counter ("Teslim Et") first.
+    if (order.courierType === "pool" && !order.packingVerifiedAt) {
+      throw new HttpsError("failed-precondition", "Collect the package at the counter first.", { code: "courierPool/not-handed-over" });
+    }
     const now = Timestamp.now();
     tx.set(orderRef, { departedAt: now }, { merge: true });
     if (projectionSnap.exists) tx.update(projectionRef, { departedAt: now, status: "departed", updatedAt: now });
@@ -553,6 +557,7 @@ export function buildCourierAssignedOrderProjection(
   courierAuthUid: string | null,
   branchName = "",
   switchboardPhone = DEFAULT_MARKETPLACE_SWITCHBOARD_PHONE,
+  lateDeliveryMinutes = 35,
 ): Record<string, unknown> | null {
   if (order.channel !== "delivery" || CLOSED_STATUSES.has(order.status as string)) return null;
   const assigned = order.assignedCourierId as string | undefined;
@@ -602,6 +607,11 @@ export function buildCourierAssignedOrderProjection(
     reportedPaymentMethodId: (order.courierReportedPaymentMethodId as string | undefined) ?? null,
     // ADR-085 stage 6B — the courier's own cancellation request, if any.
     cancellationRequestStatus: (order.courierCancellationStatus as string | undefined) ?? null,
+    // ADR-085 stage 6C-1 — late alarm (server mark + the threshold for the
+    // app's own clock) and whether a pool package was handed over.
+    lateAt: order.courierLateAt ?? null,
+    lateDeliveryMinutes,
+    handedOver: order.courierType !== "pool" || Boolean(order.packingVerifiedAt),
     status,
     departedAt: order.departedAt ?? null,
     deliveredAt: order.courierReportedDeliveredAt ?? null,
@@ -613,6 +623,7 @@ const PROJECTION_INPUT_FIELDS = [
   "courierReportedDeliveredAt", "courierReportedPaymentMethodId", "contactPhone",
   "contactFirstName", "contactLastName", "deliveryAddressSnapshot", "customerNote",
   "marketplaceProvider", "marketplaceOrderCode", "courierCancellationStatus",
+  "courierLateAt", "packingVerifiedAt",
 ] as const;
 
 function projectionInputsChanged(before: DocumentData, after: DocumentData): boolean {
@@ -640,9 +651,12 @@ export async function syncCourierProjectionForOrder(
     authUid = courierSnap.exists ? ((courierSnap.data()!.authUid as string | undefined) ?? null) : null;
   }
   let branchName = "";
+  let lateDeliveryMinutes = 35;
   if (courierId && typeof order.branchId === "string") {
     const branchSnap = await db.collection("branches").doc(order.branchId).get();
     branchName = (branchSnap.data()?.name as string | undefined) ?? "";
+    const late = branchSnap.data()?.courierOperationSettings?.lateDeliveryMinutes;
+    if (typeof late === "number" && late > 0) lateDeliveryMinutes = late;
   }
   let switchboardPhone = DEFAULT_MARKETPLACE_SWITCHBOARD_PHONE;
   const provider = marketplaceProviderOf(order);
@@ -651,7 +665,7 @@ export async function syncCourierProjectionForOrder(
     const configured = orgSnap.data()?.courierCallSettings?.marketplaceSwitchboardPhone;
     if (typeof configured === "string" && configured.trim()) switchboardPhone = configured.trim();
   }
-  const projection = buildCourierAssignedOrderProjection(orderId, order, authUid, branchName, switchboardPhone);
+  const projection = buildCourierAssignedOrderProjection(orderId, order, authUid, branchName, switchboardPhone, lateDeliveryMinutes);
   if (projection) {
     await projectionRef.set({ ...projection, updatedAt: Timestamp.now() });
   } else {

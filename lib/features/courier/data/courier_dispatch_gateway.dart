@@ -73,9 +73,14 @@ abstract interface class CourierDispatchGateway {
   Future<CourierAssignmentResult> assignCourierToOrder({
     required String orderId,
     required String courierId,
+    bool packingVerified = false,
   });
 
   Future<void> markCourierReturned({required String courierId});
+
+  /// ADR-085 stage 6C-1 — "Teslim Et": a pool courier collects its package
+  /// at the counter after "Eksiksiz Hazırlandı" is ticked.
+  Future<void> confirmPackageHandover({required String orderId});
 
   /// AP-6 Sprint 3 — registers a consortium/external-merchant delivery
   /// order (see `registerConsortiumOrder.ts`'s own doc comment for the
@@ -108,6 +113,7 @@ abstract interface class CourierDispatchGateway {
   Future<List<CourierAssignmentResult>> batchAssignCourierToOrders({
     required List<String> orderIds,
     required String courierId,
+    bool packingVerified = false,
   });
 }
 
@@ -188,11 +194,13 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
   Future<CourierAssignmentResult> assignCourierToOrder({
     required String orderId,
     required String courierId,
+    bool packingVerified = false,
   }) async {
     try {
       final result = await _call('assignCourierToOrder', {
         'orderId': orderId,
         'courierId': courierId,
+        'packingVerified': packingVerified,
       });
       final data = result;
       return CourierAssignmentResult(
@@ -201,6 +209,16 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
         trackingToken: data['trackingToken'] as String,
         status: data['status'] as String,
       );
+    } on functions.FirebaseFunctionsException catch (error) {
+      _rethrow(error);
+    }
+  }
+
+  @override
+  Future<void> confirmPackageHandover({required String orderId}) async {
+    try {
+      await _call('confirmPackageHandover',
+          {'orderId': orderId, 'packingVerified': true});
     } on functions.FirebaseFunctionsException catch (error) {
       _rethrow(error);
     }
@@ -264,11 +282,13 @@ class FirebaseCourierDispatchGateway implements CourierDispatchGateway {
   Future<List<CourierAssignmentResult>> batchAssignCourierToOrders({
     required List<String> orderIds,
     required String courierId,
+    bool packingVerified = false,
   }) async {
     try {
       final result = await _call('batchAssignCourierToOrders', {
         'orderIds': orderIds,
         'courierId': courierId,
+        'packingVerified': packingVerified,
       });
       final results = result['results'] as List<dynamic>;
       return [
@@ -312,11 +332,16 @@ class UnavailableCourierDispatchGateway implements CourierDispatchGateway {
   Future<CourierAssignmentResult> assignCourierToOrder({
     required String orderId,
     required String courierId,
+    bool packingVerified = false,
   }) async =>
       _unavailable();
 
   @override
   Future<void> markCourierReturned({required String courierId}) async =>
+      _unavailable();
+
+  @override
+  Future<void> confirmPackageHandover({required String orderId}) async =>
       _unavailable();
 
   @override
@@ -341,6 +366,7 @@ class UnavailableCourierDispatchGateway implements CourierDispatchGateway {
   Future<List<CourierAssignmentResult>> batchAssignCourierToOrders({
     required List<String> orderIds,
     required String courierId,
+    bool packingVerified = false,
   }) async =>
       _unavailable();
 }

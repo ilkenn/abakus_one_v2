@@ -20,12 +20,14 @@ void main() {
     'loyalty',
   ];
 
-  test('a cashier sees only the POS', () {
-    expect(menu({StaffRole.cashier}), ['pos']);
+  test('a cashier sees the POS and the courier alerts (ADR-085 stage 6C-1)',
+      () {
+    expect(menu({StaffRole.cashier}), ['courier-alerts', 'pos']);
   });
 
   test('a packing lead sees only the kitchen (KDS) and delivery dispatch', () {
-    expect(menu({StaffRole.packingLead}), ['kitchen', 'delivery-dispatch']);
+    expect(menu({StaffRole.packingLead}),
+        ['kitchen', 'delivery-dispatch', 'courier-alerts']);
   });
 
   test('a courier gets no panel menu at all (Kurye Ekranım instead)', () {
@@ -33,7 +35,8 @@ void main() {
   });
 
   test('a courier who is also a cashier still never sees the overview', () {
-    expect(menu({StaffRole.courier, StaffRole.cashier}), ['pos']);
+    expect(menu({StaffRole.courier, StaffRole.cashier}),
+        ['courier-alerts', 'pos']);
   });
 
   test('counter staff see POS and kitchen, never management screens', () {

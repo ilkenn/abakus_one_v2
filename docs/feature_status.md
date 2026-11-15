@@ -12229,6 +12229,48 @@ Product owner approved the data model, the Storage/Firestore rules and the 6A �
     lists MetropolCard), `submitStaffDeliveryOrder.test.ts` (MetropolCard is no longer an invalid method);
   - app: `courier_work_screen_test.dart` (slip, method change, online order, cancellation request),
     `courier_oversight_screen_test.dart` (4).
+
+### Stage 6C-1 — field alerts, packing check, day-end lock (2026-11-15) — Visual Review Bekleniyor
+
+- **Branch settings** (`branches/{id}.courierOperationSettings`): courier cash limit (default 3.000 TL) and late
+  threshold (default 35 minutes, 5–240). Set by a manager of the branch or an admin/owner ("Kurye Uyarıları" →
+  "Kurye Ayarları"); the change is audited.
+- **Cash limit.**
+  - "Teslim Ettim" with cash adds the amount to `couriers/{id}.carriedCashMinorUnits`, mirrored to the courier's
+    `courierAccounts` doc.
+  - Passing the limit shows the courier a red "Nakit limitiniz doldu, kasaya teslim yapın" banner and opens
+    the alert `operationalAlerts/cashLimit-{courierId}`.
+  - The cashier's settlement resets the cash (except the cash of packages still held for another branch) and
+    closes the alert.
+- **Late.**
+  - `sweepLateCourierDeliveries` runs every 5 minutes. It marks an order still out for delivery past the
+    threshold (`courierLateAt`; the clock starts at "Yola Çıktım", else at the hand-over) and opens the alert
+    `late-{orderId}`.
+  - The courier card shows "GECİKTİ · N dk" in red, also on the phone's own clock.
+  - Delivery or settlement closes the alert; the panel list closes late alerts whose order is no longer on
+    the road.
+- **Alerts** reach, by push, the branch's cashiers, packing leads and managers and every admin/owner; the
+  courier gets its own.
+  - The panel's new "Kurye Uyarıları" (cashier, packing lead, manager, admin/owner) lists them in red, with a
+    count badge on the menu, refreshed every minute.
+- **"Eksiksiz Hazırlandı".**
+  - "Kuryeye Ver" (single, planned courier and batch) first shows every line of the ticket. The server refuses
+    the assignment without `packingVerified` and records `packingVerifiedAt/ByUid`.
+  - A pool courier who got a ready package at approval collects it at the counter: "Teslim Et"
+    (`confirmPackageHandover`) with the same check. Until then "Yola Çıktım" and "Teslim Ettim" are refused, and
+    the courier sees "Paketi kasadan teslim alın".
+- **MetropolCard** is also in the POS's new delivery order form.
+- **Day-end lock.** `closeCashSession` refuses (`courierWorkOpen`) while the branch has a delivery order still
+  out for delivery or not settled, a pending courier cancellation request, or an unreviewed payment-method
+  change. It lists each one, and the POS shows them line by line. The existing open-table lock stays.
+- Tests:
+  - server: `courierFieldAlertsPure.test.ts` (3), `courierFieldAlerts.test.ts` (4 emulator: settings and who
+    may set them, cash limit and alert visibility, late marking and closing, the packing check), plus 2 in
+    `courierSettlement.test.ts` (cash reset, day-end lock); the pool flow in `courierPool.test.ts` now hands
+    over at the counter, and every assignment call in the dispatch tests sends `packingVerified`;
+  - app: `courier_alerts_screen_test.dart` (4), new cases in `courier_work_screen_test.dart` and
+    `delivery_dispatch_planned_courier_test.dart`; the role-menu test now pins "Kurye Uyarıları" for the
+    cashier and the packing lead.
 - Tests: `courierPayPure.test.ts` (6), `courierPay.test.ts` (4 emulator: form rate and pool rule,
   versions/back-dating/branch scope, the whole shift flow with earnings visibility, pool couriers),
   `courierSettlement.test.ts` (package lines at the rate in force; none without a profile),

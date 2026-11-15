@@ -229,7 +229,7 @@ test("assignCourierToOrder: accepts a readyForPickup order as a valid source, tr
   const courierId = await seedCourier(chain);
   const orderId = await seedDeliveryOrder(chain, { status: "readyForPickup", merchantId: "merchant-a" });
 
-  const { httpStatus, body } = await callCallable(ASSIGN_URL, { orderId, courierId }, manager.idToken);
+  const { httpStatus, body } = await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId }, manager.idToken);
   assert.strictEqual(httpStatus, 200, JSON.stringify(body));
   assert.strictEqual(body.result?.status, "outForDelivery");
 
@@ -252,7 +252,7 @@ test("batchAssignCourierToOrders: assigns 3 orders to one courier in one call, a
 
   const { httpStatus, body } = await callCallable(
     BATCH_ASSIGN_URL,
-    { orderIds: [orderA, orderB, orderC], courierId },
+    { packingVerified: true, orderIds: [orderA, orderB, orderC], courierId },
     manager.idToken,
   );
   assert.strictEqual(httpStatus, 200, JSON.stringify(body));
@@ -282,7 +282,7 @@ test("batchAssignCourierToOrders: one invalid order in the batch fails the whole
 
   const { httpStatus } = await callCallable(
     BATCH_ASSIGN_URL,
-    { orderIds: [validOrder, alreadyCompletedOrder], courierId },
+    { packingVerified: true, orderIds: [validOrder, alreadyCompletedOrder], courierId },
     manager.idToken,
   );
   assert.strictEqual(httpStatus, 400);
@@ -302,7 +302,7 @@ test("batchAssignCourierToOrders: a marketplace-immutable order in the batch is 
 
   const { httpStatus, body } = await callCallable(
     BATCH_ASSIGN_URL,
-    { orderIds: [validOrder, marketplaceOrder], courierId },
+    { packingVerified: true, orderIds: [validOrder, marketplaceOrder], courierId },
     manager.idToken,
   );
   assert.strictEqual(httpStatus, 400, JSON.stringify(body));
@@ -329,7 +329,7 @@ test("advanceDeliveryOrderStatus completion hook: creates a ConsortiumDeliverySe
   assert.strictEqual(register.httpStatus, 200, JSON.stringify(register.body));
   const orderId = register.body.result!.orderId as string;
 
-  const assign = await callCallable(ASSIGN_URL, { orderId, courierId }, manager.idToken);
+  const assign = await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId }, manager.idToken);
   assert.strictEqual(assign.httpStatus, 200, JSON.stringify(assign.body));
 
   const complete = await callCallable(
@@ -355,7 +355,7 @@ test("advanceDeliveryOrderStatus completion hook: creates no settlement for a no
   const courierId = await seedCourier(chain);
   const orderId = await seedDeliveryOrder(chain);
 
-  await callCallable(ASSIGN_URL, { orderId, courierId }, manager.idToken);
+  await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId }, manager.idToken);
   const complete = await callCallable(
     ADVANCE_DELIVERY_URL,
     { orderId, targetStatus: "completed" },

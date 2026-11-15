@@ -58,6 +58,9 @@ class CourierWorkAccount {
     required this.isExternal,
     required this.serviceDistrictIds,
     required this.isActive,
+    this.carriedCashMinorUnits = 0,
+    this.cashLimitMinorUnits,
+    this.cashLimitExceeded = false,
   });
 
   final String uid;
@@ -69,6 +72,12 @@ class CourierWorkAccount {
   final bool isExternal;
   final List<String> serviceDistrictIds;
   final bool isActive;
+
+  /// ADR-085 stage 6C-1 — the cash collected and not yet handed in at the
+  /// till, the branch's limit, and whether it is passed.
+  final int carriedCashMinorUnits;
+  final int? cashLimitMinorUnits;
+  final bool cashLimitExceeded;
 
   factory CourierWorkAccount.fromFirestore(
           String uid, Map<String, dynamic> data) =>
@@ -83,7 +92,22 @@ class CourierWorkAccount {
             if (d is String) d,
         ],
         isActive: (data['status'] as String? ?? 'active') == 'active',
+        carriedCashMinorUnits: _int(data['carriedCashMinorUnits']),
+        cashLimitMinorUnits: (data['cashLimitMinorUnits'] as num?)?.toInt(),
+        cashLimitExceeded: data['cashLimitExceeded'] == true,
       );
+}
+
+/// A Firestore `Timestamp` (or a `DateTime`) as a `DateTime`, without the
+/// domain layer importing the Firestore SDK.
+DateTime? _moment(Object? raw) {
+  if (raw == null) return null;
+  if (raw is DateTime) return raw;
+  try {
+    return (raw as dynamic).toDate() as DateTime;
+  } catch (_) {
+    return null;
+  }
 }
 
 enum CourierWorkOrderStatus {
@@ -121,6 +145,10 @@ class CourierWorkOrder {
     this.marketplaceOrderCode,
     this.switchboardPhone,
     this.cancellationRequestStatus,
+    this.departedAt,
+    this.lateAt,
+    this.lateDeliveryMinutes = 35,
+    this.handedOver = true,
   });
 
   final String orderId;
@@ -157,6 +185,28 @@ class CourierWorkOrder {
   /// `rejected`, or `null` when none.
   final String? cancellationRequestStatus;
 
+  /// ADR-085 stage 6C-1 — "Yola Çıktım", the server's late mark, and the
+  /// branch's threshold (so the card turns red on the phone's own clock too).
+  final DateTime? departedAt;
+  final DateTime? lateAt;
+  final int lateDeliveryMinutes;
+
+  /// A pool package collected at the counter ("Teslim Et"); always `true`
+  /// for a restaurant courier (checked at "Kuryeye Ver").
+  final bool handedOver;
+
+  /// Minutes on the road past the threshold, or `null` while on time.
+  int? lateMinutesAt(DateTime now) {
+    if (status == CourierWorkOrderStatus.deliveredAwaitingSettlement) {
+      return null;
+    }
+    final start = departedAt;
+    if (start == null) return lateAt == null ? null : lateDeliveryMinutes;
+    final minutes = now.difference(start).inMinutes;
+    if (minutes >= lateDeliveryMinutes || lateAt != null) return minutes;
+    return null;
+  }
+
   /// Open work first: on the road, assigned, reserved, then delivered.
   int get statusRank => switch (status) {
         CourierWorkOrderStatus.departed => 0,
@@ -188,6 +238,11 @@ class CourierWorkOrder {
         marketplaceOrderCode: data['marketplaceOrderCode'] as String?,
         switchboardPhone: data['switchboardPhone'] as String?,
         cancellationRequestStatus: data['cancellationRequestStatus'] as String?,
+        departedAt: _moment(data['departedAt']),
+        lateAt: _moment(data['lateAt']),
+        lateDeliveryMinutes:
+            (data['lateDeliveryMinutes'] as num?)?.toInt() ?? 35,
+        handedOver: data['handedOver'] != false,
       );
 }
 

@@ -215,6 +215,9 @@ export const setCourier = onCall(
         serviceDistrictIds: type === "pool" ? serviceDistrictIds : [],
         authUid,
         authEmail: storedAuthEmail,
+        // ADR-085 stage 6C-1 — what the courier carries survives an edit.
+        carriedCashMinorUnits: existing.exists ? (existing.data()!.carriedCashMinorUnits ?? 0) : 0,
+        cashLimitExceededAt: existing.exists ? (existing.data()!.cashLimitExceededAt ?? null) : null,
         updatedAt: now,
         revision,
       });

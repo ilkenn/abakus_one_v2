@@ -124,7 +124,13 @@ class _CourierWorkTabs extends StatelessWidget {
         bottom: TabBar(tabs: tabs),
         body: TabBarView(
           children: [
-            _MyOrdersTab(scope: scope),
+            Column(
+              children: [
+                if (account.cashLimitExceeded)
+                  _CashLimitBanner(account: account),
+                Expanded(child: _MyOrdersTab(scope: scope)),
+              ],
+            ),
             if (account.isExternal) ...[
               _PoolTab(account: account, scope: scope),
               _RequestsTab(scope: scope),
@@ -132,6 +138,30 @@ class _CourierWorkTabs extends StatelessWidget {
             const CourierEarningsTab(),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// ADR-085 stage 6C-1 — the courier passed the branch's cash limit.
+class _CashLimitBanner extends StatelessWidget {
+  const _CashLimitBanner({required this.account});
+
+  final CourierWorkAccount account;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('courierCashLimitBanner'),
+      width: double.infinity,
+      color: AppColors.error,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Text(
+        'Nakit limitiniz doldu, kasaya teslim yapın. Üzerinizdeki nakit: '
+        '${formatCourierAmount(account.carriedCashMinorUnits)}'
+        '${account.cashLimitMinorUnits == null ? '' : ' (limit ${formatCourierAmount(account.cashLimitMinorUnits!)})'}',
+        style: AppTypography.bodyMedium
+            .copyWith(color: AppColors.onPrimary, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -161,6 +191,8 @@ String _errorText(CourierWorkException error) => switch (error.detailCode) {
         'Teslim edilmiş sipariş için iptal talebi gönderilemez.',
       'courierCancellation/invalid-reason' =>
         'Gerekçe en az 5 karakter olmalı.',
+      'courierPool/not-handed-over' =>
+        'Paketi önce kasadan teslim alın (Eksiksiz Hazırlandı onayı).',
       _ => _errorTextByCode(error),
     };
 
@@ -409,6 +441,7 @@ class _OrderCard extends StatelessWidget {
         order.status == CourierWorkOrderStatus.deliveredAwaitingSettlement;
     final callPlan = courierCallPlan(order);
     final navigation = courierNavigationOptions(order);
+    final late = order.lateMinutesAt(DateTime.now());
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
       child: AppCard(
@@ -433,6 +466,26 @@ class _OrderCard extends StatelessWidget {
                 key: Key('courierOrderStatus-${order.orderId}'),
                 style: AppTypography.bodySmall
                     .copyWith(color: statusColor, fontWeight: FontWeight.bold)),
+            if (late != null)
+              Container(
+                key: Key('courierLate-${order.orderId}'),
+                margin: const EdgeInsets.only(top: AppSpacing.xs),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+                decoration: const BoxDecoration(
+                    color: AppColors.error, borderRadius: AppRadius.kSmall),
+                child: Text('GECİKTİ · $late dk',
+                    style: AppTypography.labelMedium
+                        .copyWith(color: AppColors.onPrimary)),
+              ),
+            if (!order.handedOver && !delivered)
+              Text(
+                'Paketi kasadan teslim alın — kontrol onayından sonra yola '
+                'çıkabilirsiniz.',
+                key: Key('courierNotHandedOver-${order.orderId}'),
+                style:
+                    AppTypography.bodySmall.copyWith(color: AppColors.warning),
+              ),
             const SizedBox(height: AppSpacing.xs),
             if (order.branchName.isNotEmpty)
               Text('Alış: ${order.branchName}', style: AppTypography.bodySmall),
@@ -481,7 +534,8 @@ class _OrderCard extends StatelessWidget {
                     label: Text(callPlan.label),
                     onPressed: () => onOpen(callPlan.uri),
                   ),
-                if (order.status == CourierWorkOrderStatus.assigned)
+                if (order.status == CourierWorkOrderStatus.assigned &&
+                    order.handedOver)
                   FilledButton.icon(
                     key: Key('departed-${order.orderId}'),
                     icon: const Icon(Icons.two_wheeler_rounded),

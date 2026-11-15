@@ -70,6 +70,62 @@ class CourierPaymentChange {
       );
 }
 
+enum CourierAlertType {
+  cashLimit,
+  late;
+
+  static CourierAlertType parse(Object? raw) =>
+      raw == 'courierLate' ? CourierAlertType.late : CourierAlertType.cashLimit;
+}
+
+/// ADR-085 stage 6C-1 — an open field alert: a courier over the cash
+/// limit, or a package late on the road.
+class CourierOperationalAlert {
+  const CourierOperationalAlert({
+    required this.alertId,
+    required this.type,
+    required this.courierName,
+    required this.orderId,
+    required this.orderNumber,
+    required this.amountMinorUnits,
+    required this.limitMinorUnits,
+    required this.minutes,
+    required this.openedAt,
+  });
+
+  final String alertId;
+  final CourierAlertType type;
+  final String courierName;
+  final String? orderId;
+  final String? orderNumber;
+  final int? amountMinorUnits;
+  final int? limitMinorUnits;
+  final int? minutes;
+  final DateTime openedAt;
+
+  factory CourierOperationalAlert.fromJson(Map<String, dynamic> json) =>
+      CourierOperationalAlert(
+        alertId: json['alertId'] as String? ?? '',
+        type: CourierAlertType.parse(json['type']),
+        courierName: json['courierName'] as String? ?? '',
+        orderId: json['orderId'] as String?,
+        orderNumber: json['orderNumber'] as String?,
+        amountMinorUnits: (json['amountMinorUnits'] as num?)?.toInt(),
+        limitMinorUnits: (json['limitMinorUnits'] as num?)?.toInt(),
+        minutes: (json['minutes'] as num?)?.toInt(),
+        openedAt: DateTime.fromMillisecondsSinceEpoch(
+                (json['openedAtMillis'] as num?)?.toInt() ?? 0,
+                isUtc: true)
+            .toLocal(),
+      );
+}
+
+/// The branch's courier cash limit and late threshold.
+typedef CourierOperationSettings = ({
+  int cashLimitMinorUnits,
+  int lateDeliveryMinutes,
+});
+
 /// The panel's courier oversight: payment-method changes and their slips
 /// (`functions/src/courierDeliveryControls.ts`). The server limits a
 /// manager to its branches.
@@ -88,6 +144,22 @@ abstract interface class CourierOversightGateway {
     required String organizationId,
     required String orderId,
   });
+
+  /// Stage 6C-1 — open field alerts of the caller's branches.
+  Future<List<CourierOperationalAlert>> alerts({
+    required String organizationId,
+  });
+
+  Future<CourierOperationSettings> settings({
+    required String organizationId,
+    required String branchId,
+  });
+
+  Future<void> saveSettings({
+    required String organizationId,
+    required String branchId,
+    required CourierOperationSettings settings,
+  });
 }
 
 class FirebaseCourierOversightGateway implements CourierOversightGateway {
@@ -102,6 +174,10 @@ class FirebaseCourierOversightGateway implements CourierOversightGateway {
         return 'Bu değişiklik zaten incelendi.';
       case 'courierDelivery/no-slip':
         return 'Bu siparişin slip fotoğrafı yok.';
+      case 'courierSettings/invalid-cash-limit':
+        return 'Geçerli bir nakit limiti girin.';
+      case 'courierSettings/invalid-late-minutes':
+        return 'Gecikme süresi 5 ile 240 dakika arasında olmalı.';
     }
     switch (code) {
       case 'permission-denied':
@@ -171,6 +247,48 @@ class FirebaseCourierOversightGateway implements CourierOversightGateway {
         {'organizationId': organizationId, 'orderId': orderId});
     return base64Decode(result['base64'] as String? ?? '');
   }
+
+  @override
+  Future<List<CourierOperationalAlert>> alerts({
+    required String organizationId,
+  }) async {
+    final result = await _call(
+        'listOperationalAlerts', {'organizationId': organizationId});
+    return [
+      for (final alert in (result['alerts'] as List? ?? const []))
+        CourierOperationalAlert.fromJson(
+            Map<String, dynamic>.from(alert as Map)),
+    ];
+  }
+
+  @override
+  Future<CourierOperationSettings> settings({
+    required String organizationId,
+    required String branchId,
+  }) async {
+    final result = await _call('getBranchCourierSettings',
+        {'organizationId': organizationId, 'branchId': branchId});
+    return (
+      cashLimitMinorUnits:
+          (result['cashLimitMinorUnits'] as num?)?.toInt() ?? 300000,
+      lateDeliveryMinutes:
+          (result['lateDeliveryMinutes'] as num?)?.toInt() ?? 35,
+    );
+  }
+
+  @override
+  Future<void> saveSettings({
+    required String organizationId,
+    required String branchId,
+    required CourierOperationSettings settings,
+  }) async {
+    await _call('setBranchCourierSettings', {
+      'organizationId': organizationId,
+      'branchId': branchId,
+      'cashLimitMinorUnits': settings.cashLimitMinorUnits,
+      'lateDeliveryMinutes': settings.lateDeliveryMinutes,
+    });
+  }
 }
 
 class UnavailableCourierOversightGateway implements CourierOversightGateway {
@@ -197,6 +315,27 @@ class UnavailableCourierOversightGateway implements CourierOversightGateway {
   Future<Uint8List> slipPhoto({
     required String organizationId,
     required String orderId,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<List<CourierOperationalAlert>> alerts({
+    required String organizationId,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<CourierOperationSettings> settings({
+    required String organizationId,
+    required String branchId,
+  }) async =>
+      throw _error;
+
+  @override
+  Future<void> saveSettings({
+    required String organizationId,
+    required String branchId,
+    required CourierOperationSettings settings,
   }) async =>
       throw _error;
 }

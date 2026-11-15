@@ -21654,3 +21654,16 @@ owner):**
 - **A courier never cancels.** It sends a reasoned request to the Onay Kutusu (`courierOrderCancellation`); a
   manager of the branch or an admin/owner decides, and an unanswered request escalates to the platform owner
   after 24 hours. The request and its approval record are written in one transaction.
+
+**Update 2026-11-15 — stage 6C-1, field alerts and the day-end lock (product owner approved):**
+
+- **Per-branch cash limit and late threshold** (defaults 3.000 TL, 35 minutes), set by a manager of the branch
+  or an admin/owner. Cash carried by a courier is counted from "Teslim Ettim" with cash and reset at settlement.
+- **Late** means still out for delivery past the threshold since "Yola Çıktım", or since the hand-over when the
+  courier never pressed it.
+- **Who sees courier alerts:** cashier, packing lead, the branch's manager, admin and owner (push, plus the panel
+  list for the Windows POS).
+- **Nothing reaches a courier unchecked:** every hand-over records who ticked "Eksiksiz Hazırlandı". For a pool
+  courier this happens at the counter ("Teslim Et") before it may depart.
+- **No day end** while courier packages, cancellation requests or payment-method changes of the branch are
+  still open.

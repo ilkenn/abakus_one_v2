@@ -54,6 +54,12 @@ export const assignCourierToOrder = onCall(
     const data = (request.data ?? {}) as Record<string, unknown>;
     const orderId = requireString(data.orderId, "orderId");
     const courierId = requireString(data.courierId, "courierId");
+    // ADR-085 stage 6C-1 — the package is checked line by line first.
+    if (data.packingVerified !== true) {
+      throw new HttpsError("failed-precondition", 'Tick "Eksiksiz Hazırlandı" before handing the package over.', {
+        code: "courierDispatch/packing-not-verified",
+      });
+    }
 
     const db = getFirestore();
     const orderRef = db.collection("orders").doc(orderId);
@@ -152,6 +158,7 @@ export const assignCourierToOrder = onCall(
         courier,
         previousCourier,
         now: Timestamp.now(),
+        packingVerifiedByUid: request.auth!.uid,
       });
 
       return { orderId, courierId, trackingToken, status };

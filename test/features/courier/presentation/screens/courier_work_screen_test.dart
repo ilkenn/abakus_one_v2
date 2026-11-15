@@ -518,4 +518,41 @@ void main() {
     expect(find.byKey(const Key('cancelPending-o1')), findsOneWidget);
     expect(find.byKey(const Key('requestCancel-o1')), findsNothing);
   });
+
+  testWidgets(
+      'ADR-085 stage 6C-1: the cash-limit banner, a red late badge, and no '
+      'Yola Çıktım before the counter hand-over', (tester) async {
+    final repository = _FakeRepository()
+      ..account = CourierWorkAccount.fromFirestore('uid-1', const {
+        'organizationId': 'org-1',
+        'courierId': 'courier-1',
+        'type': 'pool',
+        'status': 'active',
+        'carriedCashMinorUnits': 320000,
+        'cashLimitMinorUnits': 300000,
+        'cashLimitExceeded': true,
+      })
+      ..latestOrders = [
+        CourierWorkOrder.fromFirestore('o1', {
+          'orderNumber': 'DL-0001',
+          'status': 'departed',
+          'departedAt': DateTime.now().subtract(const Duration(minutes: 40)),
+          'lateDeliveryMinutes': 35,
+        }),
+        CourierWorkOrder.fromFirestore('o2', const {
+          'orderNumber': 'DL-0002',
+          'status': 'assigned',
+          'handedOver': false,
+        }),
+      ];
+    await _pump(tester, repository);
+
+    expect(find.byKey(const Key('courierCashLimitBanner')), findsOneWidget);
+    expect(find.textContaining('Nakit limitiniz doldu'), findsOneWidget);
+    expect(find.byKey(const Key('courierLate-o1')), findsOneWidget);
+    expect(find.textContaining('GECİKTİ · 40 dk'), findsOneWidget);
+    expect(find.byKey(const Key('courierLate-o2')), findsNothing);
+    expect(find.byKey(const Key('courierNotHandedOver-o2')), findsOneWidget);
+    expect(find.byKey(const Key('departed-o2')), findsNothing);
+  });
 }

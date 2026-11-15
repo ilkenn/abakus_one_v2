@@ -223,7 +223,7 @@ test("assignCourierToOrder: assigns an available internal courier to a ready ord
 
   const { httpStatus, body } = await callCallable(
     ASSIGN_URL,
-    { orderId, courierId },
+    { packingVerified: true, orderId, courierId },
     manager.idToken,
   );
   assert.strictEqual(httpStatus, 200, JSON.stringify(body));
@@ -247,7 +247,7 @@ test("assignCourierToOrder: assigning to an already-outForDelivery order updates
   const courierId = await seedCourier(chain);
   const orderId = await seedDeliveryOrder(chain, { status: "outForDelivery" });
 
-  const { httpStatus, body } = await callCallable(ASSIGN_URL, { orderId, courierId }, manager.idToken);
+  const { httpStatus, body } = await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId }, manager.idToken);
   assert.strictEqual(httpStatus, 200, JSON.stringify(body));
   assert.strictEqual(body.result?.status, "outForDelivery");
 
@@ -263,8 +263,8 @@ test("assignCourierToOrder: two different unique trackingTokens are generated fo
   const orderA = await seedDeliveryOrder(chain);
   const orderB = await seedDeliveryOrder(chain);
 
-  const resultA = await callCallable(ASSIGN_URL, { orderId: orderA, courierId }, manager.idToken);
-  const resultB = await callCallable(ASSIGN_URL, { orderId: orderB, courierId }, manager.idToken);
+  const resultA = await callCallable(ASSIGN_URL, { packingVerified: true, orderId: orderA, courierId }, manager.idToken);
+  const resultB = await callCallable(ASSIGN_URL, { packingVerified: true, orderId: orderB, courierId }, manager.idToken);
   assert.strictEqual(resultA.httpStatus, 200, JSON.stringify(resultA.body));
   assert.strictEqual(resultB.httpStatus, 200, JSON.stringify(resultB.body));
   assert.notStrictEqual(resultA.body.result?.trackingToken, resultB.body.result?.trackingToken);
@@ -279,7 +279,7 @@ test("assignCourierToOrder: MarketplaceCourierImmutableViolation — an order al
   // own doc comment).
   const orderId = await seedDeliveryOrder(chain, { courierType: "marketplace" });
 
-  const { httpStatus, body } = await callCallable(ASSIGN_URL, { orderId, courierId }, manager.idToken);
+  const { httpStatus, body } = await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId }, manager.idToken);
   assert.strictEqual(httpStatus, 400, JSON.stringify(body));
   assert.strictEqual((body.error?.details as { reason?: string } | undefined)?.reason, "courier/marketplace-immutable");
 
@@ -293,7 +293,7 @@ test("assignCourierToOrder: a marketplace-typed courier can never be manually as
   const courierId = await seedCourier(chain, { type: "marketplace" });
   const orderId = await seedDeliveryOrder(chain);
 
-  const { httpStatus } = await callCallable(ASSIGN_URL, { orderId, courierId }, manager.idToken);
+  const { httpStatus } = await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId }, manager.idToken);
   assert.strictEqual(httpStatus, 400);
 });
 
@@ -303,7 +303,7 @@ test("assignCourierToOrder: a non-delivery-channel order is rejected", async () 
   const courierId = await seedCourier(chain);
   const orderId = await seedDeliveryOrder(chain, { channel: "takeaway" });
 
-  const { httpStatus } = await callCallable(ASSIGN_URL, { orderId, courierId }, manager.idToken);
+  const { httpStatus } = await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId }, manager.idToken);
   assert.strictEqual(httpStatus, 400);
 });
 
@@ -313,7 +313,7 @@ test("assignCourierToOrder: staff-tier alone is rejected (manager-tier-and-above
   const courierId = await seedCourier(chain);
   const orderId = await seedDeliveryOrder(chain);
 
-  const { httpStatus } = await callCallable(ASSIGN_URL, { orderId, courierId }, staff.idToken);
+  const { httpStatus } = await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId }, staff.idToken);
   assert.strictEqual(httpStatus, 403);
 });
 
@@ -325,7 +325,7 @@ test("assignCourierToOrder: a manager without branch access is rejected", async 
   const courierId = await seedCourier(chain);
   const orderId = await seedDeliveryOrder(chain);
 
-  const { httpStatus } = await callCallable(ASSIGN_URL, { orderId, courierId }, manager.idToken);
+  const { httpStatus } = await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId }, manager.idToken);
   assert.strictEqual(httpStatus, 403);
 });
 
@@ -369,7 +369,7 @@ test("advanceDeliveryOrderStatus completion hook: reaching completed removes the
   const courierId = await seedCourier(chain);
   const orderId = await seedDeliveryOrder(chain);
 
-  const assign = await callCallable(ASSIGN_URL, { orderId, courierId }, manager.idToken);
+  const assign = await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId }, manager.idToken);
   assert.strictEqual(assign.httpStatus, 200, JSON.stringify(assign.body));
   const midCourier = await courierDoc(courierId);
   assert.deepStrictEqual(midCourier?.activeOrderIds, [orderId]);

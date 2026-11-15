@@ -94,6 +94,11 @@ void main() {
       size: const Size(1400, 900),
     );
 
+    await tester.dragUntilVisible(
+      find.text('Müşteri & Sadakat'),
+      find.byType(ListView).first,
+      const Offset(0, -200),
+    );
     expect(find.text('Müşteri & Sadakat'), findsOneWidget);
     await tester.dragUntilVisible(
       find.text('Yapılandırma'),
@@ -117,7 +122,13 @@ void main() {
       ),
     );
 
-    // ADR-085 stage 3 — the sidebar now starts with the name/role header.
+    // ADR-085 stage 3 — the sidebar now starts with the name/role header;
+    // stage 6 added courier screens, so the item may be scrolled away.
+    await tester.dragUntilVisible(
+      find.text('Segmentasyon'),
+      find.byType(ListView).first,
+      const Offset(0, -200),
+    );
     await tester.ensureVisible(find.text('Segmentasyon'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Segmentasyon'));

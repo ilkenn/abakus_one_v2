@@ -23,6 +23,7 @@ const REQUEST_URL = fn("requestPoolOrder");
 const RESPOND_URL = fn("respondToCourierPoolRequest");
 const DEPARTED_URL = fn("courierMarkDeparted");
 const DELIVERED_URL = fn("courierReportDelivered");
+const HANDOVER_URL = fn("confirmPackageHandover");
 
 let app: admin.app.App;
 before(() => { app = admin.initializeApp({ projectId: EMULATOR_PROJECT_ID }); });
@@ -280,7 +281,7 @@ test("approving while the order is still prepared reserves it; the one-tap assig
   );
 
   await db().collection("orders").doc(orderId).update({ status: "ready" });
-  const assign = await callCallable(ASSIGN_URL, { orderId, courierId: ali.courierId }, s.cashier.idToken);
+  const assign = await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId: ali.courierId }, s.cashier.idToken);
   assert.strictEqual(assign.httpStatus, 200, JSON.stringify(assign.body));
   order = await orderDoc(orderId);
   assert.strictEqual(order.status, "outForDelivery");
@@ -307,6 +308,14 @@ test("Yola Çıktım records departedAt only; Teslim Ettim keeps the order open 
   const notMine = await callCallable(DEPARTED_URL, { orderId }, stranger.idToken);
   assert.strictEqual(notMine.body.error?.status, "PERMISSION_DENIED");
 
+  // ADR-085 stage 6C-1 — a pool courier collects at the counter first.
+  const early = await callCallable(DEPARTED_URL, { orderId }, ali.idToken);
+  assert.strictEqual(early.body.error?.details?.code, "courierPool/not-handed-over", JSON.stringify(early.body));
+  const unchecked = await callCallable(HANDOVER_URL, { orderId }, s.cashier.idToken);
+  assert.strictEqual((unchecked.body.error?.details as { code?: string } | undefined)?.code, "courierDispatch/packing-not-verified");
+  const handedOver = await callCallable(HANDOVER_URL, { orderId, packingVerified: true }, s.cashier.idToken);
+  assert.strictEqual(handedOver.httpStatus, 200, JSON.stringify(handedOver.body));
+  assert.ok((await orderDoc(orderId)).packingVerifiedAt, "who/when recorded on the order");
   const departed = await callCallable(DEPARTED_URL, { orderId }, ali.idToken);
   assert.strictEqual(departed.httpStatus, 200, JSON.stringify(departed.body));
   let order = await orderDoc(orderId);
@@ -369,7 +378,7 @@ test("Havuzdan Geri Al and a direct staff assignment both close the listing and 
     organizationId: s.t.organizationId, branchId: s.t.branchId, displayName: "Mehmet", type: "internal",
     status: "active", dispatchStatus: "available", activeOrderIds: [], revision: 1,
   });
-  const assign = await callCallable(ASSIGN_URL, { orderId: direct, courierId: internalCourierId }, s.cashier.idToken);
+  const assign = await callCallable(ASSIGN_URL, { packingVerified: true, orderId: direct, courierId: internalCourierId }, s.cashier.idToken);
   assert.strictEqual(assign.httpStatus, 200, JSON.stringify(assign.body));
   await waitFor(() => requestDoc(r2.body.result!.requestId as string), (r) => r.status === "rejected", "request rejected");
   assert.strictEqual((await requestDoc(r2.body.result!.requestId as string)).rejection, "orderClosed");
@@ -387,8 +396,8 @@ test("a reassignment removes the order from the previous courier", async () => {
     });
   }
   const orderId = await seedOrder(s.t);
-  assert.strictEqual((await callCallable(ASSIGN_URL, { orderId, courierId: ids[0] }, s.cashier.idToken)).httpStatus, 200);
-  assert.strictEqual((await callCallable(ASSIGN_URL, { orderId, courierId: ids[1] }, s.cashier.idToken)).httpStatus, 200);
+  assert.strictEqual((await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId: ids[0] }, s.cashier.idToken)).httpStatus, 200);
+  assert.strictEqual((await callCallable(ASSIGN_URL, { packingVerified: true, orderId, courierId: ids[1] }, s.cashier.idToken)).httpStatus, 200);
   const first = (await db().collection("couriers").doc(ids[0]).get()).data()!;
   assert.deepStrictEqual(first.activeOrderIds, []);
   assert.strictEqual(first.dispatchStatus, "available");

@@ -34,6 +34,7 @@ class CourierAssignmentDialog extends ConsumerStatefulWidget {
     required this.branchId,
     required String orderId,
     required this.courierType,
+    this.packingVerified = false,
   })  : orderIds = null,
         _singleOrderId = orderId;
 
@@ -42,6 +43,7 @@ class CourierAssignmentDialog extends ConsumerStatefulWidget {
     required this.organizationId,
     required this.branchId,
     required List<String> this.orderIds,
+    this.packingVerified = false,
   })  : courierType = null,
         _singleOrderId = null;
 
@@ -55,6 +57,10 @@ class CourierAssignmentDialog extends ConsumerStatefulWidget {
   /// The (single-mode) order's current `courierType` — `null`/non-marketplace
   /// means assignment is allowed. Always `null` in batch mode.
   final CourierType? courierType;
+
+  /// ADR-085 stage 6C-1 — "Eksiksiz Hazırlandı" was ticked just before
+  /// (`showPackingCheckDialog`); the server refuses the hand-over otherwise.
+  final bool packingVerified;
 
   bool get isBatch => orderIds != null;
 
@@ -96,11 +102,13 @@ class _CourierAssignmentDialogState
         await gateway.batchAssignCourierToOrders(
           orderIds: widget._targetOrderIds,
           courierId: courier.id,
+          packingVerified: widget.packingVerified,
         );
       } else {
         await gateway.assignCourierToOrder(
           orderId: widget._targetOrderIds.single,
           courierId: courier.id,
+          packingVerified: widget.packingVerified,
         );
       }
       if (!mounted) return;

@@ -18,6 +18,7 @@ import { applyDeliveryLifecycleTransition, writeDeliveryOrderStatusChangeAuditEv
 import { prepareCancellationStockHandling, applyCancellationStockHandling } from "./cancelOrderLineStock";
 import { buildApprovalRequestRecord, type ActionHandlerParams, type ActionHandlerResult } from "./remoteApproval";
 import { deliverCourierNotification } from "./courierNotifications";
+import { applyCarriedCash, courierOperationSettingsOf, lateAlertRef, resolveAlert } from "./courierFieldAlerts";
 
 /**
  * ADR-085 stage 6B (product owner approved 2026-11-15) — safety at the door.
@@ -193,8 +194,13 @@ export const courierReportDelivered = onCall({ enforceAppCheck: shouldEnforceApp
   }
 
   const result = await db.runTransaction(async (tx) => {
-    const { courierId, courier, order, projectionRef, projectionSnap } = await loadCourierOrder(request, tx, db, orderId);
+    const { courierId, courier, courierRef, order, projectionRef, projectionSnap } = await loadCourierOrder(request, tx, db, orderId);
     if (order.courierReportedDeliveredAt) return { orderId, duplicate: true, changed: false };
+    // Stage 6C-1 — a pool courier collects at the counter ("Teslim Et") first.
+    if (order.courierType === "pool" && !order.packingVerifiedAt) {
+      precondition("Collect the package at the counter first.", "courierPool/not-handed-over");
+    }
+    const branchSnap = await tx.get(db.collection("branches").doc(String(order.branchId)));
     const planned = (order.paymentMethodSnapshot?.paymentMethodId as string | undefined) ?? null;
     const decision = resolveDeliveryPayment(planned, reported);
     if (decision.needsSlip && !slip) precondition("A photo of the slip is required.", "courierDelivery/slip-required");
@@ -214,6 +220,15 @@ export const courierReportDelivered = onCall({ enforceAppCheck: shouldEnforceApp
       ...(order.departedAt ? {} : { departedAt: now }),
     }, { merge: true });
     if (slip) tx.update(slip.ref, { status: "used" });
+    // Stage 6C-1 — cash the courier now carries; the late alert closes.
+    let cashState: { carriedMinorUnits: number; exceeded: boolean } | null = null;
+    if (decision.collected && decision.methodId === "cash") {
+      cashState = applyCarriedCash(tx, db, {
+        organizationId, branchId, courierRef, courier, courierUid: uid, order,
+        settings: courierOperationSettingsOf(branchSnap.data()), now,
+      });
+    }
+    if (order.courierLateAt) resolveAlert(tx, lateAlertRef(db, orderId), now);
     if (projectionSnap.exists) {
       const projection = { ...projectionSnap.data()! };
       for (const field of COURIER_PII_FIELDS) delete projection[field];
@@ -258,7 +273,11 @@ export const courierReportDelivered = onCall({ enforceAppCheck: shouldEnforceApp
         actorType: "courier", actorUid: uid, actorRoles, correlationId: generateCorrelationId(), now,
       });
     }
-    return { orderId, duplicate: false, changed: decision.changed };
+    return {
+      orderId, duplicate: false, changed: decision.changed,
+      carriedCashMinorUnits: cashState?.carriedMinorUnits ?? null,
+      cashLimitExceeded: cashState?.exceeded ?? false,
+    };
   });
   return result;
 });

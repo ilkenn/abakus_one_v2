@@ -8,6 +8,8 @@ import '../../../../core/theme/app_radius.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../courier/presentation/screens/courier_dispatch_dashboard_screen.dart';
+import '../../../courier/presentation/providers/courier_oversight_providers.dart';
+import '../../../courier/presentation/screens/courier_alerts_screen.dart';
 import '../../../courier/presentation/screens/courier_oversight_screen.dart';
 import '../../../courier/presentation/screens/courier_pay_management_screen.dart';
 import '../../../courier/presentation/screens/courier_work_screen.dart';
@@ -79,6 +81,35 @@ class _AdminNavItem {
   final IconData icon;
   final Set<StaffRole> visibleToRoles;
   final Widget Function(BuildContext context, WidgetRef ref) builder;
+}
+
+/// A menu item's icon; "Kurye Uyarıları" carries the open-alert count
+/// (ADR-085 stage 6C-1).
+class _NavItemIcon extends ConsumerWidget {
+  const _NavItemIcon({required this.item});
+
+  final _AdminNavItem item;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final icon = Icon(item.icon, size: 20);
+    if (item.id != 'courier-alerts') return icon;
+    final count = ref
+            .watch(courierOperationalAlertsProvider(
+                ref.watch(currentOrganizationIdProvider)))
+            .valueOrNull
+            ?.length ??
+        0;
+    return CourierAlertsRefresher(
+      organizationId: ref.watch(currentOrganizationIdProvider),
+      child: Badge(
+        key: const Key('courierAlertsBadge'),
+        isLabelVisible: count > 0,
+        label: Text('$count'),
+        child: icon,
+      ),
+    );
+  }
 }
 
 class _AdminNavGroup {
@@ -323,6 +354,31 @@ class _AdminShellScreenState extends ConsumerState<AdminShellScreen> {
                 child: CourierPayManagementScreen(
                   organizationId: ref.read(currentOrganizationIdProvider),
                 ),
+              ),
+            ),
+          ),
+          // ADR-085 stage 6C-1 — couriers over the cash limit and late
+          // packages; seen by everyone who hands packages to couriers.
+          _AdminNavItem(
+            id: 'courier-alerts',
+            label: 'Kurye Uyarıları',
+            icon: Icons.notification_important_outlined,
+            visibleToRoles: const {
+              StaffRole.cashier,
+              StaffRole.packingLead,
+              StaffRole.manager,
+              StaffRole.admin,
+            },
+            builder: (context, ref) => RoleGate.forRoles(
+              const {
+                StaffRole.cashier,
+                StaffRole.packingLead,
+                StaffRole.manager,
+                StaffRole.admin,
+              },
+              child: CourierAlertsScreen(
+                organizationId: ref.read(currentOrganizationIdProvider),
+                branchId: branchId,
               ),
             ),
           ),
@@ -1151,7 +1207,7 @@ class _DesktopShellState extends State<_DesktopShell> {
                           ListTile(
                             contentPadding:
                                 const EdgeInsets.only(left: AppSpacing.xl),
-                            leading: Icon(item.icon, size: 20),
+                            leading: _NavItemIcon(item: item),
                             title: Text(item.label),
                             selected: item.id == _selected,
                             selectedTileColor:
@@ -1249,7 +1305,7 @@ class _TabletShellState extends State<_TabletShell> {
                   const Divider(height: 1),
                   for (final item in activeGroup.items)
                     ListTile(
-                      leading: Icon(item.icon, size: 20),
+                      leading: _NavItemIcon(item: item),
                       title: Text(item.label),
                       selected: item.id == _selected,
                       onTap: () => setState(() => _selected = item.id),
@@ -1336,7 +1392,7 @@ class _MobileShellState extends State<_MobileShell> {
                       ListTile(
                         contentPadding:
                             const EdgeInsets.only(left: AppSpacing.xl),
-                        leading: Icon(item.icon, size: 20),
+                        leading: _NavItemIcon(item: item),
                         title: Text(item.label),
                         onTap: () {
                           setState(() {
