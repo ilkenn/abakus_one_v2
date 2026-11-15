@@ -191,6 +191,7 @@ export const setCourierInvoicing = onCall({ enforceAppCheck: shouldEnforceAppChe
  * or PNG) now; `paymentSlip` (a camera photo, stage 6B) later.
  */
 export const requestCourierUploadGrant = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
   const data = (request.data ?? {}) as Record<string, unknown>;
   const purpose = data.purpose;
   if (purpose !== "invoice") invalid('purpose must be "invoice".');
@@ -222,6 +223,7 @@ export const requestCourierUploadGrant = onCall({ enforceAppCheck: shouldEnforce
 
 /** "Fatura Yükle" step 1: what the period would invoice (lines and computed earnings). */
 export const previewCourierInvoice = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
   const data = (request.data ?? {}) as Record<string, unknown>;
   const { periodFrom, periodTo } = requireInvoicePeriod(data.periodFrom, data.periodTo, Date.now());
   const db = getFirestore();
@@ -246,6 +248,7 @@ export const previewCourierInvoice = onCall({ enforceAppCheck: shouldEnforceAppC
 
 /** "Fatura Yükle" step 2: the uploaded file becomes an invoice and its lines are locked. */
 export const submitCourierInvoice = onCall({ enforceAppCheck: shouldEnforceAppCheck() }, async (request: CallableRequest) => {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign-in is required.");
   const data = (request.data ?? {}) as Record<string, unknown>;
   const grantId = requireString(data.grantId, "grantId");
   const nowMillis = Date.now();
