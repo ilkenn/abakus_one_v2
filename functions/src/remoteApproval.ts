@@ -1,4 +1,5 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import type { CallableRequest } from "firebase-functions/v2/https";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import type { Firestore, Transaction } from "firebase-admin/firestore";
@@ -427,6 +428,35 @@ export const respondToApprovalRequest = onCall(
     const clientRequestId = sanitizeClientRequestId(data.clientRequestId);
     const reasonMessage = sanitizeReasonMessage(data.reasonMessage);
 
+    const result = await respondCore(db, {
+      requestId, decision: decision as "approved" | "rejected", responderUid: request.auth.uid,
+      reasonMessage, correlationId, clientRequestId, ownerDirect: false,
+    });
+
+    return { requestId, status: result.status, idempotent: false, correlationId };
+  },
+);
+
+/**
+ * The one approve/reject transaction, shared by [respondToApprovalRequest]
+ * (after its own responder checks) and, since 2026-11-15, by the tenant
+ * owner's automatic approval of its own requests ([handleApprovalRequestCreated]).
+ * Runs the closed, allowlisted handler for the action type, so both paths
+ * apply exactly the same effect.
+ */
+async function respondCore(db: Firestore, params: {
+  requestId: string;
+  decision: "approved" | "rejected";
+  responderUid: string;
+  reasonMessage: string | null;
+  correlationId: string;
+  clientRequestId: string | null;
+  ownerDirect: boolean;
+}): Promise<{ status: ApprovalStatus }> {
+  const { requestId, decision, reasonMessage, correlationId, clientRequestId, ownerDirect } = params;
+  const responderUid = params.responderUid;
+  const ref = db.collection("remoteApprovalRequests").doc(requestId);
+  {
     const result = await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const current = snap.data() as ApprovalRequestRecord;
@@ -443,21 +473,22 @@ export const respondToApprovalRequest = onCall(
       let newValue: unknown = null;
       if (decision === "approved") {
         const handler = ACTION_HANDLERS[current.actionType];
-        const handlerResult = await handler({ tx, db, request: current, now, respondedByActorUid: request.auth!.uid });
+        const handlerResult = await handler({ tx, db, request: current, now, respondedByActorUid: responderUid });
         newValue = handlerResult.newValue;
       } else {
         const rejectionHandler = REJECTION_HANDLERS[current.actionType];
         if (rejectionHandler) {
-          const handlerResult = await rejectionHandler({ tx, db, request: current, now, respondedByActorUid: request.auth!.uid });
+          const handlerResult = await rejectionHandler({ tx, db, request: current, now, respondedByActorUid: responderUid });
           newValue = handlerResult.newValue;
         }
       }
 
       tx.update(ref, {
         status: decision as ApprovalStatus,
-        respondedByActorUid: request.auth!.uid,
+        respondedByActorUid: responderUid,
         respondedAt: now,
         version: current.version + 1,
+        ...(ownerDirect ? { approvalMode: "ownerDirect" } : {}),
       });
 
       // Approval history — immutable, auto-generated unique id (never
@@ -470,8 +501,9 @@ export const respondToApprovalRequest = onCall(
         branchId: current.branchId,
         actionType: current.actionType,
         eventType: decision === "approved" ? "approval.approved" : "approval.rejected",
-        respondedByActorUid: request.auth!.uid,
+        respondedByActorUid: responderUid,
         reasonMessage,
+        ownerDirect,
         correlationId,
         clientRequestId,
         timestamp: now.toDate().toISOString(),
@@ -483,12 +515,12 @@ export const respondToApprovalRequest = onCall(
         eventId: `${requestId}-${decision}-v${current.version + 1}`,
         organizationId: current.organizationId,
         branchId: current.branchId,
-        type: decision === "approved" ? "approval.approved" : "approval.rejected",
+        type: ownerDirect ? "approval.approvedByOwnerDirect" : decision === "approved" ? "approval.approved" : "approval.rejected",
         targetRef: current.targetAggregateRef,
         previousValue: null,
         newValue,
         actorType: "staff",
-        actorUid: request.auth!.uid,
+        actorUid: responderUid,
         reasonMessage: reasonMessage ?? undefined,
         correlationId,
         clientRequestId,
@@ -497,8 +529,50 @@ export const respondToApprovalRequest = onCall(
 
       return { status: decision as ApprovalStatus };
     });
+    return result;
+  }
+}
 
-    return { requestId, status: result.status, idempotent: false, correlationId };
+/**
+ * 2026-11-15 (product owner decision) — the tenant owner never waits for a
+ * second person. When an active `tenantOwner` member opens any approval
+ * request (device activation, refund, cash movement/adjustment, stock count
+ * difference, Boncuk correction, ...), it is approved at once in the owner's
+ * name, through the same allowlisted handler a manual approval runs, and
+ * recorded as `approvalMode: "ownerDirect"` / audit
+ * `approval.approvedByOwnerDirect`. Every other role keeps the four-eyes
+ * rule. Membership (server-written) is the source of truth for the role.
+ */
+export async function handleApprovalRequestCreated(
+  db: Firestore,
+  requestId: string,
+  created: ApprovalRequestRecord | undefined,
+): Promise<boolean> {
+  if (!created || created.status !== "pending") return false;
+  const membership = await db.collection("memberships").doc(`${created.organizationId}_${created.requestedByActorUid}`).get();
+  const m = membership.data();
+  const roles: unknown = m?.roles;
+  if (!m || m.status !== "active" || !Array.isArray(roles) || !roles.includes("tenantOwner")) return false;
+  try {
+    await respondCore(db, {
+      requestId, decision: "approved", responderUid: created.requestedByActorUid,
+      reasonMessage: "Sahip onayı (otomatik)", correlationId: generateCorrelationId(),
+      clientRequestId: null, ownerDirect: true,
+    });
+    return true;
+  } catch (error) {
+    // Already answered, expired or a stale target: leave it as it is.
+    if (error instanceof HttpsError && error.code === "failed-precondition") return false;
+    throw error;
+  }
+}
+
+export const onApprovalRequestCreatedOwnerDirect = onDocumentCreated(
+  "remoteApprovalRequests/{requestId}",
+  async (event) => {
+    await handleApprovalRequestCreated(
+      getFirestore(), event.params.requestId, event.data?.data() as ApprovalRequestRecord | undefined,
+    );
   },
 );
 

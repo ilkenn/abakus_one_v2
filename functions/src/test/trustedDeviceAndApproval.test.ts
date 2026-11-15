@@ -479,3 +479,39 @@ test("sweepExpiredApprovalRequests: a pending request past its expiry is escalat
   const afterSecondSweep = await admin.firestore().collection("remoteApprovalRequests").doc(requestId).get();
   assert.strictEqual(afterSecondSweep.data()?.status, "expired");
 });
+
+// 2026-11-15 — a pending registration whose approval request expired is
+// renewed in the caller's name instead of staying stuck forever.
+test("device registration: an expired approval request is renewed on the next registration request, and the new one can be approved", async () => {
+  const { organizationId, branchId } = await seedTenant();
+  const admin1 = await bootstrapRealAdmin(organizationId);
+  const manager = await newStaffMember(organizationId, branchId, admin1.idToken, "manager");
+  const device = generateDeviceKeyPair();
+  const body = { organizationId, branchId, platform: "android", publicKeyPem: device.publicKeyPem, signatureAlgorithm: "ed25519", capabilities: ["POS"] };
+
+  const first = await callCallable(REQUEST_DEVICE_REGISTRATION_URL, body, manager.idToken);
+  assert.strictEqual(first.httpStatus, 200, JSON.stringify(first.body));
+  const firstRequestId = first.body.result?.approvalRequestId as string;
+  await admin.firestore().collection("remoteApprovalRequests").doc(firstRequestId).update({ status: "expired" });
+
+  const again = await callCallable(REQUEST_DEVICE_REGISTRATION_URL, body, manager.idToken);
+  assert.strictEqual(again.httpStatus, 200, JSON.stringify(again.body));
+  const renewedId = again.body.result?.approvalRequestId as string;
+  assert.ok(renewedId && renewedId !== firstRequestId, "a fresh approval request");
+  assert.ok(renewedId.endsWith("-v2"));
+
+  // The old one can never apply; the new one activates the device.
+  const respond = await callCallable(RESPOND_APPROVAL_URL, { requestId: renewedId, decision: "approved" }, admin1.idToken);
+  assert.strictEqual(respond.httpStatus, 200, JSON.stringify(respond.body));
+  const deviceId = again.body.result?.deviceId as string;
+  const reg = await admin.firestore().collection("trustedDeviceRegistrations").doc(`${organizationId}_${branchId}_${deviceId}`).get();
+  assert.strictEqual(reg.data()!.status, "active");
+
+  // While a request is still pending, asking again changes nothing.
+  const device2 = generateDeviceKeyPair();
+  const body2 = { ...body, publicKeyPem: device2.publicKeyPem };
+  const p1 = await callCallable(REQUEST_DEVICE_REGISTRATION_URL, body2, manager.idToken);
+  const p2 = await callCallable(REQUEST_DEVICE_REGISTRATION_URL, body2, manager.idToken);
+  assert.strictEqual(p2.body.result?.approvalRequestId, undefined);
+  assert.strictEqual((await admin.firestore().collection("remoteApprovalRequests").doc(p1.body.result?.approvalRequestId as string).get()).data()!.status, "pending");
+});

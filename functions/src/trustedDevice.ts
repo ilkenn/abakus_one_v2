@@ -164,6 +164,32 @@ export const requestDeviceRegistration = onCall(
     const existing = await ref.get();
     if (existing.exists) {
       const existingData = existing.data() as DeviceRegistrationDoc;
+      // 2026-11-15 — a registration still "pending" whose approval request
+      // expired (or was escalated) could never be approved again: every new
+      // request returned it unchanged. Renew it in the caller's name with a
+      // fresh approval request (a new version, so the old one can never
+      // apply to it).
+      if (existingData.status === "pending") {
+        const currentApprovalId = `approval-deviceActivation-${ref.path.replace(/\//g, "_")}-v${existingData.version}`;
+        const currentApproval = await db.collection("remoteApprovalRequests").doc(currentApprovalId).get();
+        if (!currentApproval.exists || currentApproval.data()!.status !== "pending") {
+          const nextVersion = existingData.version + 1;
+          await ref.update({ registeredByUid: request.auth.uid, registeredAt: Timestamp.now(), version: nextVersion });
+          const renewed = await createApprovalRequest({
+            organizationId,
+            branchId,
+            actionType: "deviceActivation",
+            requestedByActorUid: request.auth.uid,
+            targetAggregateRef: ref.path,
+            targetAggregateVersion: nextVersion,
+            payloadHash: existingData.publicKeyFingerprint,
+          });
+          return {
+            deviceId, status: "pending", trustTier: existingData.trustTier,
+            alreadyRegistered: true, approvalRequestId: renewed.requestId,
+          };
+        }
+      }
       return { deviceId, status: existingData.status, trustTier: existingData.trustTier, alreadyRegistered: true };
     }
 

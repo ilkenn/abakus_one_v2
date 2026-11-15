@@ -56,7 +56,7 @@ export {
   suspendTrustedDevice,
   retireTrustedDevice,
 } from "./trustedDevice";
-export { respondToApprovalRequest, sweepExpiredApprovalRequests } from "./remoteApproval";
+export { respondToApprovalRequest, sweepExpiredApprovalRequests, onApprovalRequestCreatedOwnerDirect } from "./remoteApproval";
 export {
   grantEntitlement,
   renewEntitlement,

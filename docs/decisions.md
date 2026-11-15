@@ -21691,3 +21691,19 @@ owner):**
   - there is no IBAN setting. If one is added, it is admin/owner only.
 - **Open (not decided here):** a staff member can still cancel a whole dine-in order directly; whether that
   should go through manager approval is a separate product decision.
+
+**Update 2026-11-15 — the tenant owner never waits for approval (product owner decision):**
+
+- **Owner requests approve themselves.** Any approval request opened by an active `tenantOwner` member is
+  approved at once in the owner's name. This covers device activation, refund, cash movement/adjustment, stock
+  count difference and Boncuk correction.
+  - Mechanism: a Firestore trigger (`onApprovalRequestCreatedOwnerDirect`) runs the same allowlisted handler a
+    manual approval runs.
+  - Recorded as `approvalMode: "ownerDirect"`, audit `approval.approvedByOwnerDirect`, approval event
+    `ownerDirect: true`.
+  - The role is read from the server-written membership, never from the client.
+- **Four-eyes stays** for admin, manager and every other role.
+- **The owner may also hold the `courier` role.** With a linked courier record, the existing "Rol Değiştir" preview
+  opens a working courier screen; server permissions are always the owner's own.
+- **Fix:** a device registration still `pending` whose approval request expired is renewed in the caller's name with
+  a fresh approval request (new version) instead of staying stuck.

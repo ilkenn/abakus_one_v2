@@ -581,3 +581,66 @@ test("count (6C-2): a manager's EXACT count is accepted at once without an alert
   assert.ok(byCashier.body.result?.approvalRequestId);
   assert.strictEqual((await db().collection("oversightAlerts").doc(`cashVariance-${byCashier.body.result?.countId}`).get()).exists, false);
 });
+
+// -----------------------------------------------------------------------
+// 2026-11-15 — the tenant owner never waits for a second person: its own
+// approval requests are approved at once ("ownerDirect"); every other role
+// keeps the four-eyes rule.
+// -----------------------------------------------------------------------
+
+async function newDirectMember(f: Fixture, roles: string[]): Promise<{ idToken: string; uid: string }> {
+  const { idToken, refreshToken, uid } = await signUpAnonymously();
+  await db().collection("memberships").doc(`${f.organizationId}_${uid}`).set({
+    organizationId: f.organizationId, uid, roles, branchAccess: [f.branchId], restaurantAccess: [], status: "active", version: 1,
+  });
+  const sync = await callCallable(SYNC_CLAIMS_URL, {}, idToken);
+  assert.strictEqual(sync.httpStatus, 200, JSON.stringify(sync.body));
+  return { uid, idToken: await refreshIdToken(refreshToken) };
+}
+
+test("owner direct: the tenant owner's own cash movement is approved at once, audited as ownerDirect", async () => {
+  const f = await setupFixture();
+  const drawerId = await createDrawer(f);
+  const sessionId = await openSessionAsManager(f, drawerId, 5000);
+  const owner = await newDirectMember(f, ["tenantOwner"]);
+
+  const req = await callCallable(REQUEST_MOVEMENT_URL, { ...ctx(f), sessionId, movementType: "manualIn", amountMinorUnits: 1200, reason: "Bozuk para eklendi." }, owner.idToken);
+  assert.strictEqual(req.httpStatus, 200, JSON.stringify(req.body));
+  const requestId = req.body.result?.approvalRequestId as string;
+
+  // The Firestore trigger may already have approved it; calling the
+  // handler directly as well must reach the same single result.
+  const { handleApprovalRequestCreated } = await import("../remoteApproval");
+  const created = (await db().collection("remoteApprovalRequests").doc(requestId).get()).data();
+  await handleApprovalRequestCreated(db(), requestId, { ...(created as object), status: "pending" } as never);
+
+  const approval = (await db().collection("remoteApprovalRequests").doc(requestId).get()).data()!;
+  assert.strictEqual(approval.status, "approved");
+  assert.strictEqual(approval.approvalMode, "ownerDirect");
+  assert.strictEqual(approval.respondedByActorUid, owner.uid);
+  const session = (await db().collection("cashSessions").doc(sessionId).get()).data()!;
+  assert.strictEqual(session.settledAmountMinorUnits, 6200, "the movement is applied by the same handler a manual approval runs");
+  const audit = await db().collection("auditEvents").doc(`${requestId}-approved-v2`).get();
+  assert.strictEqual(audit.data()?.type, "approval.approvedByOwnerDirect");
+  assert.strictEqual(audit.data()?.actorUid, owner.uid);
+
+  // A second run (the trigger retrying) changes nothing.
+  assert.strictEqual(await handleApprovalRequestCreated(db(), requestId, { ...(created as object), status: "pending" } as never), false);
+  assert.strictEqual((await db().collection("cashSessions").doc(sessionId).get()).data()!.settledAmountMinorUnits, 6200);
+});
+
+test("owner direct: an admin's or manager's request still waits for a second person", async () => {
+  const f = await setupFixture();
+  const drawerId = await createDrawer(f);
+  const sessionId = await openSessionAsManager(f, drawerId, 5000);
+  const { handleApprovalRequestCreated } = await import("../remoteApproval");
+  for (const actor of [f.manager, await newDirectMember(f, ["admin"])]) {
+    const req = await callCallable(REQUEST_MOVEMENT_URL, { ...ctx(f), sessionId, movementType: "manualIn", amountMinorUnits: 300, reason: "Test girişi." }, actor.idToken);
+    assert.strictEqual(req.httpStatus, 200, JSON.stringify(req.body));
+    const requestId = req.body.result?.approvalRequestId as string;
+    const created = (await db().collection("remoteApprovalRequests").doc(requestId).get()).data();
+    assert.strictEqual(await handleApprovalRequestCreated(db(), requestId, created as never), false);
+    assert.strictEqual((await db().collection("remoteApprovalRequests").doc(requestId).get()).data()!.status, "pending");
+  }
+  assert.strictEqual((await db().collection("cashSessions").doc(sessionId).get()).data()!.settledAmountMinorUnits, 5000);
+});

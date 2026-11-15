@@ -12342,3 +12342,14 @@ Product owner approved the data model, the Storage/Firestore rules and the 6A �
   - staff (`manageDineInOrders`) can still cancel a whole dine-in order directly (now with a written reason; no
     manager approval). Moving it behind approval is a separate decision.
   - No IBAN setting exists. If one is added, it must be admin/owner only (ADR-085 6C-2).
+
+### Owner full access without approval (2026-11-15) — Visual Review Bekleniyor
+
+- An active `tenantOwner`'s own approval requests are approved at once (`ownerDirect`, audited); the POS/phone device
+  activation therefore needs no second person for the owner. Admin, manager and staff keep the four-eyes rule.
+- Expired pending device registrations are renewed on the next request.
+- Staff phone + password sign-in no longer stops on the customer profile gate ("Hesap bilgilerine şu anda
+  ulaşılamıyor").
+- Tests: `cashRegisterEngine.test.ts` (+2: owner movement applied and audited, retry idempotent; admin/manager still
+  pending), `trustedDeviceAndApproval.test.ts` (+1: expired registration renewed and approvable),
+  `customer_registration_gateway_test.dart` (+2).
